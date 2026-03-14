@@ -11,7 +11,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import requests
 from PySide6.QtWidgets import QApplication, QLineEdit
 
-from src.core.config import AppConfig, render_event_message
+from src.core.config import (
+    AppConfig,
+    EVT_IDX_APPLIED_LIMIT,
+    EVT_IDX_CAMERA_NAME,
+    EVT_IDX_IMAGE_PATH,
+    EVT_IDX_IS_OVERSPEED,
+    EVT_IDX_PLATE,
+    EVT_IDX_SPEED,
+    EVT_IDX_SPEED_VALUE,
+    EVT_IDX_TS,
+    render_event_message,
+)
 from src.core.camera_client import CameraClient
 from src.core.database import Database
 from src.core.evolution_client import EvolutionApiClient
@@ -296,8 +307,71 @@ class HikvisionAppTests(unittest.TestCase):
 
             rows = db.recent_events_with_speed(camera_name="Camera A")
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0][10], 60.0)
-            self.assertEqual(rows[0][11], 1)
+            self.assertEqual(rows[0][EVT_IDX_APPLIED_LIMIT], 60.0)
+            self.assertEqual(rows[0][EVT_IDX_IS_OVERSPEED], 1)
+
+    def test_database_insert_speed_text_and_overspeed_false(self):
+        """Insert com texto de velocidade e is_overspeed False; verifica speed_value e colunas de excesso."""
+        with self._temp_db_path() as db_path:
+            db = Database(db_path)
+            db.insert_event({
+                "camera_name": "Camera A",
+                "ts": "2026-03-13 11:00:00",
+                "plate": "DEF5678",
+                "speed": "45 km/h",
+                "lane": "2",
+                "direction": "S",
+                "event_type": "evento",
+                "image_path": "",
+                "xml_path": "",
+                "json_path": "",
+                "raw_xml": "<xml />",
+                "applied_speed_limit": 60.0,
+                "is_overspeed": False,
+            })
+            rows = db.recent_events_with_speed(camera_name="Camera A")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][EVT_IDX_SPEED], "45 km/h")
+            self.assertEqual(rows[0][EVT_IDX_SPEED_VALUE], 45.0)
+            self.assertEqual(rows[0][EVT_IDX_APPLIED_LIMIT], 60.0)
+            self.assertEqual(rows[0][EVT_IDX_IS_OVERSPEED], 0)
+
+    def test_database_insert_and_read_back_verifies_save(self):
+        """Verifica que os dados inseridos sao persistidos e recuperados do banco."""
+        with self._temp_db_path() as db_path:
+            db = Database(db_path)
+            self.assertEqual(db.count_events(), 0)
+
+            data = {
+                "camera_name": "Camera Test",
+                "ts": "2026-03-14 12:00:00",
+                "plate": "TEST123",
+                "speed": "80 km/h",
+                "lane": "1",
+                "direction": "N",
+                "event_type": "overspeed",
+                "image_path": "/path/img.jpg",
+                "xml_path": "/path/ev.xml",
+                "json_path": "/path/ev.json",
+                "raw_xml": "<event />",
+                "applied_speed_limit": 60.0,
+                "is_overspeed": True,
+            }
+            db.insert_event(data)
+
+            self.assertEqual(db.count_events(), 1)
+            self.assertIsNotNone(db.last_event_id())
+
+            rows = db.recent_events_with_speed(camera_name="Camera Test")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][EVT_IDX_CAMERA_NAME], "Camera Test")
+            self.assertEqual(rows[0][EVT_IDX_TS], "2026-03-14 12:00:00")
+            self.assertEqual(rows[0][EVT_IDX_PLATE], "TEST123")
+            self.assertEqual(rows[0][EVT_IDX_SPEED], "80 km/h")
+            self.assertEqual(rows[0][EVT_IDX_SPEED_VALUE], 80.0)
+            self.assertEqual(rows[0][EVT_IDX_APPLIED_LIMIT], 60.0)
+            self.assertEqual(rows[0][EVT_IDX_IS_OVERSPEED], 1)
+            self.assertEqual(rows[0][EVT_IDX_IMAGE_PATH], "/path/img.jpg")
 
     def test_database_migrates_existing_events_table(self):
         with self._temp_db_path() as db_path:

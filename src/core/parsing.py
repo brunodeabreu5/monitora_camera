@@ -26,7 +26,10 @@ def parse_event_xml(xml_text: str) -> dict | None:
         root = ET.fromstring(xml_text)
         data["event_type"] = detect_text(root, ["eventType", "eventDescription", "eventName", "type", "eventTypeEx", "alarmType", "vehicleDetectType"])
         data["plate"] = detect_text(root, ["licensePlate", "plateNo", "vehiclePlate", "plateNumber", "license", "plate"])
-        data["speed"] = detect_text(root, ["speed", "vehicleSpeed", "vehicleSpeedValue"])
+        data["speed"] = detect_text(root, [
+            "speed", "vehicleSpeed", "vehicleSpeedValue",
+            "speedValue", "vehicleSpeedKmh", "speedKmh", "speedValueKmh",
+        ])
         data["lane"] = detect_text(root, ["laneNo", "lane", "driveLane"])
         data["direction"] = detect_text(root, ["direction", "driveDirection", "vehicleDirection"])
         date_part = detect_text(root, ["dateTime", "time", "captureTime", "occurTime"])

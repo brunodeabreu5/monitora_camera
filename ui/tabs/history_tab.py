@@ -1,6 +1,6 @@
 # History tab - view and filter event history
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
+    QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QCheckBox,
     QLineEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem
 )
 
@@ -33,6 +33,7 @@ class HistoryTab(BaseTab):
         self.hist_plate = QLineEdit()
         self.hist_date = QLineEdit()
         self.hist_min_speed = QLineEdit()
+        self.hist_over_limit = QCheckBox("So excesso de velocidade")
 
         btn_filter = QPushButton("Filtrar")
         btn_filter.clicked.connect(self.refresh)
@@ -42,6 +43,7 @@ class HistoryTab(BaseTab):
             QLabel("Placa"), self.hist_plate,
             QLabel("Data"), self.hist_date,
             QLabel("Veloc. min."), self.hist_min_speed,
+            self.hist_over_limit,
             btn_filter
         ]:
             filters_layout.addWidget(widget)
@@ -101,18 +103,37 @@ class HistoryTab(BaseTab):
                 if idx >= 0:
                     self.hist_camera.setCurrentIndex(idx)
 
+    def _get_speed_limit_for_filter(self):
+        """Limite de velocidade para o filtro 'apenas excesso' (camera selecionada ou global)."""
+        config = self.get_config()
+        if not config:
+            return 60
+        camera_name = self.hist_camera.currentText().strip() if self.hist_camera else ""
+        if self.main_window and hasattr(self.main_window, "get_camera_speed_settings"):
+            limit, _ = self.main_window.get_camera_speed_settings(camera_name or None)
+            return float(limit)
+        if camera_name:
+            cam = config.get_camera(camera_name)
+            if cam and cam.get("speed_limit_enabled", True):
+                return float(cam.get("speed_limit_value", 60))
+        return float(config.data.get("speed_limit", 60))
+
     def refresh(self):
         """Refresh the history table with filtered data."""
         db = self.get_database()
         if not db:
             return
 
+        over_limit = None
+        if self.hist_over_limit.isChecked():
+            over_limit = self._get_speed_limit_for_filter()
+
         rows = db.filtered_events(
             camera_name=self.hist_camera.currentText().strip(),
             plate=self.hist_plate.text().strip(),
             date_text=self.hist_date.text().strip(),
             min_speed=self.hist_min_speed.text().strip(),
-            over_limit=None
+            over_limit=over_limit
         )
 
         self.history_table.setRowCount(len(rows))
@@ -178,12 +199,16 @@ class HistoryTab(BaseTab):
         if not db:
             return
 
+        over_limit = None
+        if self.hist_over_limit.isChecked():
+            over_limit = self._get_speed_limit_for_filter()
+
         rows = db.filtered_events(
             camera_name=self.hist_camera.currentText().strip(),
             plate=self.hist_plate.text().strip(),
             date_text=self.hist_date.text().strip(),
             min_speed=self.hist_min_speed.text().strip(),
-            over_limit=None
+            over_limit=over_limit
         )
 
         with open(path, "w", newline="", encoding="utf-8-sig") as f:

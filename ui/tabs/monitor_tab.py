@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
+    QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QCheckBox,
     QPushButton, QLabel, QTableWidget, QTableWidgetItem, QSplitter, QWidget
 )
 
@@ -74,6 +74,9 @@ class MonitorTab(BaseTab):
         btn_live_stop = QPushButton("Parar video")
         btn_live_stop.clicked.connect(self.stop_live_view)
 
+        self.live_detection_check = QCheckBox("Desenhar detecção de carros ao vivo")
+        self.live_detection_check.toggled.connect(self._on_live_detection_toggled)
+
         btn_start = QPushButton("Iniciar todas")
         btn_start.clicked.connect(self.start_all_monitors)
 
@@ -90,6 +93,7 @@ class MonitorTab(BaseTab):
         toolbar.addWidget(self.live_camera_combo, 1)
         toolbar.addWidget(btn_live_start)
         toolbar.addWidget(btn_live_stop)
+        toolbar.addWidget(self.live_detection_check)
         toolbar.addSpacing(12)
         toolbar.addWidget(btn_start)
         toolbar.addWidget(btn_stop)
@@ -277,6 +281,7 @@ class MonitorTab(BaseTab):
                 idx = self.live_camera_combo.findText(current_live)
                 if idx >= 0:
                     self.live_camera_combo.setCurrentIndex(idx)
+            self._sync_live_detection_check()
 
         if self.realtime_filter_camera:
             current_filter = self.realtime_filter_camera.currentText()
@@ -311,11 +316,41 @@ class MonitorTab(BaseTab):
         cam = config.get_camera(name) if name else None
         self.live_view.set_camera(cam)
 
+        self._sync_live_detection_check_from_cam(cam)
+
         if not cam:
             self.live_status.setText("Video ao vivo parado")
             return
 
         self.live_status.setText(f"Camera: {name}")
+
+    def _sync_live_detection_check(self):
+        """Sincroniza o checkbox de detecção com a câmera atualmente selecionada no combo."""
+        config = self.get_config()
+        name = self.live_camera_combo.currentText().strip() if self.live_camera_combo else ""
+        cam = config.get_camera(name) if config and name else None
+        self._sync_live_detection_check_from_cam(cam)
+
+    def _sync_live_detection_check_from_cam(self, cam: dict | None):
+        """Atualiza estado do checkbox a partir do config da câmera."""
+        if self.live_detection_check is None:
+            return
+        self.live_detection_check.blockSignals(True)
+        self.live_detection_check.setChecked(bool(cam.get("live_detection_enabled", False)) if cam else False)
+        self.live_detection_check.setEnabled(bool(cam))
+        self.live_detection_check.blockSignals(False)
+
+    def _on_live_detection_toggled(self, checked: bool):
+        """Persiste detecção ao vivo na câmera selecionada."""
+        config = self.get_config()
+        if not config or not self.live_camera_combo:
+            return
+        name = self.live_camera_combo.currentText().strip()
+        cam = config.get_camera(name) if name else None
+        if not cam:
+            return
+        cam["live_detection_enabled"] = bool(checked)
+        config.save()
 
     def start_live_view(self):
         """Start live video view for selected camera."""

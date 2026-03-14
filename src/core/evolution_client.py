@@ -162,3 +162,23 @@ class EvolutionSendWorker(QThread):
         except Exception as exc:
             log_runtime_error("EvolutionSendWorker", exc)
             self.finished_status.emit(f"Evolution API: falha no envio ({exc})")
+
+
+class EvolutionTestSendWorker(QThread):
+    """Worker para envio de mensagem de teste (não bloqueia a UI)."""
+    finished = Signal(object)  # None = sucesso, str = mensagem de erro
+
+    def __init__(self, evolution_cfg: dict, number: str, message: str):
+        super().__init__()
+        self.evolution_cfg = evolution_cfg
+        self.number = number
+        self.message = message
+
+    def run(self):
+        try:
+            client = EvolutionApiClient(self.evolution_cfg)
+            client.send_text_message(self.number, self.message)
+            self.finished.emit(None)
+        except Exception as exc:
+            log_runtime_error("EvolutionTestSendWorker", exc)
+            self.finished.emit(str(exc))

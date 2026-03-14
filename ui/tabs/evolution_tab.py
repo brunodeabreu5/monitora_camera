@@ -4,13 +4,13 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLineEdit, QPushButton, QLabel, QCheckBox, QComboBox,
-    QMessageBox, QTextEdit, QSplitter, QWidget, QTabWidget
+    QMessageBox, QProgressBar, QTextEdit, QSplitter, QWidget, QTabWidget
 )
 
 from src.core.config import (
     APP_NAME, now_str, parse_recipient_numbers, render_event_message, sanitize_phone_number
 )
-from src.core.evolution_client import EvolutionApiClient, EvolutionSendWorker
+from src.core.evolution_client import EvolutionApiClient, EvolutionSendWorker, EvolutionTestSendWorker
 from ui.widgets import PasswordField
 from .base_tab import BaseTab
 
@@ -34,6 +34,10 @@ class EvolutionTab(BaseTab):
         self.evo_qr_label = None
         self.evo_test_number = None
         self.evo_test_message = None
+        self.evo_sending_widget = None
+        self.evo_sending_progress = None
+        self.evo_sending_label = None
+        self._test_send_worker = None
 
         # UI elements - Template
         self.evo_event_template = None
@@ -126,6 +130,22 @@ class EvolutionTab(BaseTab):
         """Build the instance and test sub-tab."""
         instance_layout_root = QVBoxLayout(tab)
         instance_layout_root.setContentsMargins(0, 0, 0, 0)
+
+        # Indicador de envio (spinner)
+        self.evo_sending_widget = QWidget()
+        sending_layout = QHBoxLayout(self.evo_sending_widget)
+        sending_layout.setContentsMargins(0, 6, 0, 6)
+        self.evo_sending_progress = QProgressBar()
+        self.evo_sending_progress.setRange(0, 0)
+        self.evo_sending_progress.setMaximumHeight(22)
+        self.evo_sending_progress.setMaximumWidth(200)
+        self.evo_sending_label = QLabel("Enviando pela Evolution API...")
+        self.evo_sending_label.setStyleSheet("color: #687785;")
+        sending_layout.addWidget(self.evo_sending_progress)
+        sending_layout.addWidget(self.evo_sending_label)
+        sending_layout.addStretch(1)
+        self.evo_sending_widget.setVisible(False)
+        instance_layout_root.addWidget(self.evo_sending_widget)
 
         details_splitter = QSplitter(Qt.Horizontal)
         details_splitter.setChildrenCollapsible(False)
@@ -449,27 +469,63 @@ class EvolutionTab(BaseTab):
             QMessageBox.warning(self, APP_NAME, str(exc))
 
     def send_test_message(self):
-        """Send a test message through Evolution API."""
-        try:
-            client = self._client_from_form()
-            number = sanitize_phone_number(self.evo_test_number.text())
-            message = self.evo_test_message.toPlainText().strip()
+        """Send a test message through Evolution API (em thread, com spinner)."""
+        number = sanitize_phone_number(self.evo_test_number.text())
+        message = self.evo_test_message.toPlainText().strip()
 
-            if not number:
-                raise RuntimeError("Informe o numero de teste.")
-            if not message:
-                raise RuntimeError("Informe a mensagem de teste.")
+        if not number:
+            QMessageBox.warning(self, APP_NAME, "Informe o numero de teste.")
+            return
+        if not message:
+            QMessageBox.warning(self, APP_NAME, "Informe a mensagem de teste.")
+            return
 
-            client.send_text_message(number, message)
+        config = self.get_config()
+        if not config:
+            return
+        cfg = self.current_form()
+        config.data["evolution_api"] = cfg
+        config._normalize_evolution_api()
+        evolution_cfg = dict(config.data.get("evolution_api", {}))
+
+        if self._test_send_worker is not None and self._test_send_worker.isRunning():
+            return
+
+        self._test_send_worker = EvolutionTestSendWorker(evolution_cfg, number, message)
+        self._test_send_worker.finished.connect(self._on_test_send_finished)
+        self._show_sending_indicator()
+        self._test_send_worker.start()
+
+    def _on_test_send_finished(self, error_msg):
+        """Chamado quando o envio de teste termina."""
+        self._test_send_worker = None
+        self._hide_sending_indicator()
+        number = sanitize_phone_number(self.evo_test_number.text())
+
+        if error_msg is None:
             self._update_status_label(f"Mensagem de teste enviada para {number}.")
-
-            # Log to dashboard
             if self.main_window and hasattr(self.main_window, "append_log"):
                 self.main_window.append_log(f"Evolution API: teste enviado para {number}.")
+            QMessageBox.information(self, APP_NAME, "Mensagem de teste enviada.")
+        else:
+            self._update_status_label(f"Falha no teste Evolution: {error_msg}")
+            QMessageBox.warning(self, APP_NAME, error_msg)
 
-        except Exception as exc:
-            self._update_status_label(f"Falha no teste Evolution: {exc}")
-            QMessageBox.warning(self, APP_NAME, str(exc))
+    def _show_sending_indicator(self):
+        """Exibe o spinner de envio da Evolution API."""
+        if self.evo_sending_widget is not None:
+            self.evo_sending_widget.setVisible(True)
+
+    def _hide_sending_indicator(self):
+        """Esconde o spinner quando não há envios em andamento."""
+        if self.evo_sending_widget is None:
+            return
+        if self.main_window and hasattr(self.main_window, "evolution_workers"):
+            if len(self.main_window.evolution_workers) > 0:
+                return
+        if self._test_send_worker is not None and self._test_send_worker.isRunning():
+            return
+        self.evo_sending_widget.setVisible(False)
 
     def send_alert(self, event_data: dict, recipients: list):
         """Send an alert through Evolution API (called from main window)."""
@@ -496,6 +552,7 @@ class EvolutionTab(BaseTab):
         if self.main_window and hasattr(self.main_window, "evolution_workers"):
             self.main_window.evolution_workers.append(worker)
 
+        self._show_sending_indicator()
         worker.start()
 
     def _release_worker(self, worker):
@@ -503,3 +560,4 @@ class EvolutionTab(BaseTab):
         if self.main_window and hasattr(self.main_window, "evolution_workers"):
             if worker in self.main_window.evolution_workers:
                 self.main_window.evolution_workers.remove(worker)
+        self._hide_sending_indicator()

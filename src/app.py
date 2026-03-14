@@ -35,6 +35,7 @@ from src.core.config import (
     app_dir,
     extract_speed_value,
     hash_password,
+    log_runtime_error,
     now_str,
     parse_recipient_numbers,
     render_event_message,
@@ -168,7 +169,7 @@ class MainWindow(QMainWindow):
         # Create dashboard tab
         self.tab_dashboard = DashboardTab(); self.tab_dashboard.set_main_window(self)
         # Create users tab
-        self.tab_users = UsersTab(); self.tab_users.set_main_window(self); self.tab_users.set_logged_user(logged_user)
+        self.tab_users = UsersTab(); self.tab_users.set_main_window(self); self.tab_users.set_logged_user(self.logged_user)
         # Create history and report tabs
         self.tab_history = HistoryTab(); self.tab_history.set_main_window(self)
         self.tab_report = ReportTab(); self.tab_report.set_main_window(self)
@@ -270,6 +271,7 @@ class MainWindow(QMainWindow):
 
         # Update live view status connection
         self.live_view.status_changed.connect(self.on_live_view_status_changed)
+        names = self.config.get_camera_names()
         if hasattr(self, "live_camera_combo"):
             selected = self.live_camera_combo.currentText().strip()
             self.live_camera_combo.blockSignals(True)
@@ -428,13 +430,27 @@ class MainWindow(QMainWindow):
             self.monitor_thumbnail.setText("Sem imagem")
 
         # Process speed and trigger actions
+        speed_text = (data.get("speed") or "").strip()
+        if not speed_text:
+            log_runtime_error(
+                "Evento sem velocidade parseada",
+                RuntimeError(
+                    f"camera={data.get('camera_name')!r} event_type={data.get('event_type')!r} plate={data.get('plate')!r}; "
+                    "verifique se o XML da camera usa tags speed/vehicleSpeed/vehicleSpeedValue ou acrescente em parsing.py"
+                )
+            )
         speed_value = extract_speed_value(data.get("speed", ""))
         limit, visual_enabled = self.get_camera_speed_settings(data.get("camera_name", ""))
         data["applied_speed_limit"] = float(limit)
         data["is_overspeed"] = speed_value > float(limit)
 
         # Save to database and update UI
-        self.db.insert_event(data)
+        try:
+            self.db.insert_event(data)
+            self.append_log(f"Evento gravado no banco: {data.get('camera_name')} / placa {data.get('plate') or '-'} / {data.get('ts')}")
+        except Exception as e:
+            log_runtime_error("Falha ao gravar evento no banco", e)
+            self.append_log(f"ERRO: evento nao gravado no banco ({e})")
         self.prepend_realtime_event(data)
         self.refresh_dashboard()
         self.refresh_history()

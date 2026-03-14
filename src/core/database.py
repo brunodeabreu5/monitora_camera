@@ -94,6 +94,17 @@ class Database:
             cur.execute(query, params)
             return cur.fetchall()
 
+    def count_events(self) -> int:
+        """Retorna o número total de eventos no banco (para verificação)."""
+        with self.lock:
+            return self.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
+    def last_event_id(self) -> int | None:
+        """Retorna o id do último evento inserido (None se tabela vazia)."""
+        with self.lock:
+            row = self.conn.execute("SELECT id FROM events ORDER BY id DESC LIMIT 1").fetchone()
+            return row[0] if row else None
+
     def dashboard_event_speeds(self):
         with self.lock:
             today = datetime.now().strftime("%Y-%m-%d")

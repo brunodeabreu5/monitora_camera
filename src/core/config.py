@@ -171,6 +171,8 @@ class AppConfig:
             "rtsp_url": "",
             "live_fallback_mode": "snapshot",
             "evolution_enabled": False,
+            "live_detection_enabled": False,
+            "detection_confidence_threshold": 0.5,
         }
 
     def _default_evolution_api(self) -> dict:
@@ -237,6 +239,12 @@ class AppConfig:
             camera["rtsp_transport"] = str(camera.get("rtsp_transport", "tcp"))
             camera["live_fallback_mode"] = str(camera.get("live_fallback_mode", "snapshot"))
             camera["evolution_enabled"] = bool(camera.get("evolution_enabled", False))
+            camera["live_detection_enabled"] = bool(camera.get("live_detection_enabled", False))
+            try:
+                camera["detection_confidence_threshold"] = float(camera.get("detection_confidence_threshold", 0.5))
+            except (TypeError, ValueError):
+                camera["detection_confidence_threshold"] = 0.5
+            camera["detection_confidence_threshold"] = max(0.0, min(1.0, camera["detection_confidence_threshold"]))
             try:
                 camera["camera_port"] = int(camera.get("camera_port", defaults["camera_port"]))
             except Exception as exc:

@@ -9,6 +9,7 @@ from PySide6.QtCore import QThread, Signal
 from src.core.camera_client import CameraClient
 from src.core.config import log_runtime_error, sanitize_filename
 from src.core.parsing import looks_like_complete_event_xml, parse_event_xml
+from src.detection import CarDetector
 
 
 class EventWorker(QThread):
@@ -129,9 +130,22 @@ class LiveSnapshotWorker(QThread):
         snapshot_cfg = dict(self.camera_cfg)
         snapshot_cfg["timeout"] = min(int(snapshot_cfg.get("timeout", 15)), 5)
         client = CameraClient(snapshot_cfg)
+        detector = None
         while self.running:
             try:
                 img_bytes, used_url = client.download_snapshot()
+                if snapshot_cfg.get("live_detection_enabled"):
+                    if detector is None:
+                        try:
+                            threshold = float(snapshot_cfg.get("detection_confidence_threshold", 0.5))
+                            detector = CarDetector(confidence_threshold=max(0.0, min(1.0, threshold)))
+                        except Exception:
+                            detector = False  # não tentar de novo a cada frame
+                    if detector and detector is not True:
+                        try:
+                            img_bytes = detector.annotate(img_bytes)
+                        except Exception:
+                            pass
                 self.frame_ready.emit(img_bytes)
                 self.status.emit(f"snapshot ao vivo via {used_url}")
             except Exception as exc:
