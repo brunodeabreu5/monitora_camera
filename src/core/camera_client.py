@@ -141,7 +141,13 @@ class CameraClient:
                 r = self.request(url, stream=True, timeout=(10, None))
                 if r.status_code == 200:
                     return r, url
-                last_error = f"HTTP {r.status_code} em {url}"
+                if r.status_code == 500:
+                    last_error = (
+                        "Câmera retornou erro 500 (erro interno). "
+                        "Verifique o firmware da câmera e a configuração de eventos/alertStream."
+                    )
+                else:
+                    last_error = f"HTTP {r.status_code} em {url}"
             except Exception as e:
                 last_error = f"{url}: {e}"
         raise RuntimeError(last_error)

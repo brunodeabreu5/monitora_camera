@@ -330,9 +330,16 @@ class MainWindow(QMainWindow):
         self.update_camera_state_panel()
 
     def stop_all_monitors(self, log_message=True):
-        for _, worker in list(self.workers.items()): worker.stop(); worker.wait(3000)
-        self.workers = {}; self.camera_states = {}; self.update_camera_state_panel()
-        if log_message: self.append_log("Todos os monitores foram parados.")
+        for _, worker in list(self.workers.items()):
+            worker.stop()
+            if not worker.wait(5000):
+                worker.terminate()
+                worker.wait(2000)
+        self.workers = {}
+        self.camera_states = {}
+        self.update_camera_state_panel()
+        if log_message:
+            self.append_log("Todos os monitores foram parados.")
 
     def on_connection_state(self, camera_name, connected, detail):
         """Handle camera connection state change - delegates to monitor tab."""
