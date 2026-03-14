@@ -11,3 +11,37 @@ local_update/*.exe
 
 output/
 *.db
+
+# Config com credenciais - use hikvision_pro_v42_config.example.json como modelo
+hikvision_pro_v42_config.json
+
+# Binários grandes
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# Scripts temporários
+tmp_*.py
+replace_*.py
+
+# IDE e editores
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Arquivos OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+.coverage
+.pytest_cache/
+
+# Mais build artifacts
+*.egg-info/
+.eggs/
+
+# Diretório de cache local
+local_update/
