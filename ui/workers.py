@@ -8,7 +8,7 @@ from PySide6.QtCore import QThread, Signal
 
 from src.core.camera_client import CameraClient
 from src.core.config import log_runtime_error, sanitize_filename
-from src.core.parsing import looks_like_complete_event_xml, parse_event_xml
+from src.core.parsing import find_event_xml_end, looks_like_complete_event_xml, parse_event_xml
 from src.detection import CarDetector
 
 
@@ -60,47 +60,74 @@ class EventWorker(QThread):
                         chunk = chunk.decode("utf-8", errors="ignore")
                     buffer += chunk
 
+                    # Limite para considerar XML incompleto e descartar: eventos ANPR podem ser muito longos e incluir imagem
+                    MAX_INCOMPLETE_BEFORE_DISCARD = 50 * 1024 * 1024  # 50 MB
                     while True:
                         start = buffer.find("<?xml")
                         if start == -1:
                             break
-                        end = buffer.find("</EventNotificationAlert>")
-                        if end == -1:
-                            alt_end = buffer.find("</ANPR>")
-                            if alt_end != -1:
-                                end = alt_end + len("</ANPR>")
-                            else:
-                                break
-                        else:
-                            end += len("</EventNotificationAlert>")
+                        end = find_event_xml_end(buffer, start)
+                        if end is None:
+                            incomplete_len = len(buffer) - start
+                            if incomplete_len > MAX_INCOMPLETE_BEFORE_DISCARD:
+                                self.status.emit(f"{cfg['name']}: possivel XML incompleto ou tag de fechamento nao suportada (buffer {len(buffer)} chars)")
+                                xml_dir = out_dir / "xml"
+                                xml_dir.mkdir(parents=True, exist_ok=True)
+                                ts_label = sanitize_filename(datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+                                incomplete_path = xml_dir / f"{cfg['name']}_incomplete_{ts_label}.xml"
+                                incomplete_path.write_text(buffer[start:], encoding="utf-8")
+                                self.status.emit(f"{cfg['name']}: fragmento salvo para inspecao: {incomplete_path.name}")
+                                next_start = buffer.find("<?xml", start + 5)
+                                if next_start != -1:
+                                    buffer = buffer[next_start:]
+                                else:
+                                    buffer = buffer[start + 2000:]
+                            break
                         xml_text = buffer[start:end]
                         buffer = buffer[end:]
                         if not xml_text.strip():
                             continue
 
                         if not looks_like_complete_event_xml(xml_text):
+                            self.status.emit(f"{cfg['name']}: XML ignorado – formato nao reconhecido (fim: ...{xml_text.strip()[-60:]})")
                             continue
 
-                        event_data = parse_event_xml(xml_text)
-                        if not event_data:
-                            continue
-                        event_data["camera_name"] = cfg["name"]
                         ts_label = sanitize_filename(datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
-
-                        xml_dir = out_dir / "xml"; json_dir = out_dir / "json"; img_dir = out_dir / "images"
-                        xml_dir.mkdir(parents=True, exist_ok=True); json_dir.mkdir(parents=True, exist_ok=True); img_dir.mkdir(parents=True, exist_ok=True)
-
+                        xml_dir = out_dir / "xml"
+                        json_dir = out_dir / "json"
+                        img_dir = out_dir / "images"
+                        xml_dir.mkdir(parents=True, exist_ok=True)
+                        json_dir.mkdir(parents=True, exist_ok=True)
+                        img_dir.mkdir(parents=True, exist_ok=True)
                         xml_path = xml_dir / f"{cfg['name']}_{ts_label}.xml"
                         json_path = json_dir / f"{cfg['name']}_{ts_label}.json"
                         xml_path.write_text(xml_text, encoding="utf-8")
+
+                        event_data = parse_event_xml(xml_text)
+                        if not event_data:
+                            json_path.write_text(
+                                json.dumps({
+                                    "camera_name": cfg["name"],
+                                    "xml_path": str(xml_path),
+                                    "parse_error": True,
+                                    "ts": ts_label,
+                                }, indent=2, ensure_ascii=False),
+                                encoding="utf-8",
+                            )
+                            self.status.emit(f"{cfg['name']}: XML salvo para inspecao (nao parseado): {xml_path.name}")
+                            continue
+                        event_data["camera_name"] = cfg["name"]
                         event_data["xml_path"] = str(xml_path)
 
                         image_path, image_status = self.save_snapshot_if_possible(client, cfg, img_dir, ts_label)
                         event_data["image_path"] = image_path
                         event_data["image_status"] = image_status
+                        if not image_path and image_status and "desativado" not in (image_status or "").lower():
+                            self.status.emit(f"{cfg['name']}: snapshot não disponível – {image_status}")
 
                         json_path.write_text(json.dumps(event_data, indent=2, ensure_ascii=False), encoding="utf-8")
                         event_data["json_path"] = str(json_path)
+                        self.status.emit(f"{cfg['name']}: evento processado – placa {event_data.get('plate') or '-'} velocidade {event_data.get('speed') or '-'}")
                         self.event_received.emit(event_data)
             except Exception as e:
                 log_runtime_error(f"EventWorker {cfg['name']}", e)
@@ -135,17 +162,25 @@ class LiveSnapshotWorker(QThread):
             try:
                 img_bytes, used_url = client.download_snapshot()
                 if snapshot_cfg.get("live_detection_enabled"):
-                    if detector is None:
-                        try:
-                            threshold = float(snapshot_cfg.get("detection_confidence_threshold", 0.5))
-                            detector = CarDetector(confidence_threshold=max(0.0, min(1.0, threshold)))
-                        except Exception:
-                            detector = False  # não tentar de novo a cada frame
-                    if detector and detector is not True:
-                        try:
-                            img_bytes = detector.annotate(img_bytes)
-                        except Exception:
-                            pass
+                    try:
+                        if detector is None:
+                            try:
+                                from src.detection import is_detection_available
+                                if not is_detection_available():
+                                    self.status.emit("Detecção ao vivo: instale ultralytics e opencv-python para desenhar carros.")
+                                    detector = False
+                                else:
+                                    threshold = float(snapshot_cfg.get("detection_confidence_threshold", 0.5))
+                                    detector = CarDetector(confidence_threshold=max(0.0, min(1.0, threshold)))
+                            except Exception:
+                                detector = False
+                        if detector and detector is not True:
+                            try:
+                                img_bytes = detector.annotate(img_bytes)
+                            except Exception:
+                                pass
+                    except Exception:
+                        detector = False
                 self.frame_ready.emit(img_bytes)
                 self.status.emit(f"snapshot ao vivo via {used_url}")
             except Exception as exc:

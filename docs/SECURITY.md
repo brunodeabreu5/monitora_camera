@@ -99,7 +99,8 @@ repos:
 
 ### User Authentication
 
-- **Password Hashing**: SHA-256 with per-user salt
+- **Password Hashing**: SHA-256 with per-user random salt (stored in config as `password_salt`). New passwords and migrated accounts use salted hashes.
+- **Legacy accounts**: Users created before salted hashes were introduced are verified with the old unsalted hash; on first successful login they are automatically migrated to a salted hash and the config is saved.
 - **Default Credentials**: Admin/Admin (must be changed on first login)
 - **Password Policy**: Enforced password change for default accounts
 

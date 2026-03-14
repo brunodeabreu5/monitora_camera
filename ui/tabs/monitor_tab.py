@@ -1,10 +1,16 @@
 # Monitor tab - live camera monitoring and event streaming
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
+
+# Limite máximo de linhas na tabela de eventos recentes (configurável pela UI)
+DEFAULT_MAX_REALTIME_ROWS = 200
+REALTIME_MAX_ROWS_OPTIONS = (100, 200, 500)
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QCheckBox,
-    QPushButton, QLabel, QTableWidget, QTableWidgetItem, QSplitter, QWidget
+    QPushButton, QLabel, QTableWidget, QTableWidgetItem, QSplitter, QWidget,
+    QTabWidget
 )
 
 from src.core.config import APP_NAME
@@ -41,7 +47,9 @@ class MonitorTab(BaseTab):
 
         # UI elements - Realtime events table
         self.realtime_filter_camera = None
+        self.realtime_max_rows_combo = None
         self.realtime_table = None
+        self.realtime_max_rows = DEFAULT_MAX_REALTIME_ROWS
 
         # State
         self.live_view_running = False
@@ -50,14 +58,14 @@ class MonitorTab(BaseTab):
         self.build_ui()
 
     def build_ui(self):
-        """Build the monitor tab UI."""
+        """Build the monitor tab UI: toolbar + abas (Principal | Último evento | Estado)."""
         layout = super().build_ui()
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
-        # Toolbar section
+        # Toolbar única e compacta
         toolbar_box = QGroupBox("Controle de monitoramento")
         toolbar = QHBoxLayout(toolbar_box)
-        toolbar.setContentsMargins(10, 8, 10, 8)
+        toolbar.setContentsMargins(10, 6, 10, 6)
 
         self.live_camera_combo = QComboBox()
         self.live_camera_combo.currentTextChanged.connect(self._on_live_camera_changed)
@@ -70,16 +78,13 @@ class MonitorTab(BaseTab):
 
         btn_live_start = QPushButton("Iniciar video")
         btn_live_start.clicked.connect(self.start_live_view)
-
         btn_live_stop = QPushButton("Parar video")
         btn_live_stop.clicked.connect(self.stop_live_view)
-
-        self.live_detection_check = QCheckBox("Desenhar detecção de carros ao vivo")
+        self.live_detection_check = QCheckBox("Desenhar detecção ao vivo")
         self.live_detection_check.toggled.connect(self._on_live_detection_toggled)
 
         btn_start = QPushButton("Iniciar todas")
         btn_start.clicked.connect(self.start_all_monitors)
-
         btn_stop = QPushButton("Parar todas")
         btn_stop.clicked.connect(self.stop_all_monitors)
 
@@ -94,118 +99,126 @@ class MonitorTab(BaseTab):
         toolbar.addWidget(btn_live_start)
         toolbar.addWidget(btn_live_stop)
         toolbar.addWidget(self.live_detection_check)
-        toolbar.addSpacing(12)
+        toolbar.addSpacing(16)
         toolbar.addWidget(btn_start)
         toolbar.addWidget(btn_stop)
-        toolbar.addSpacing(12)
         toolbar.addWidget(self.monitor_count_summary)
-        toolbar.addSpacing(12)
+        toolbar.addSpacing(16)
         toolbar.addWidget(self.live_status, 1)
 
         layout.addWidget(toolbar_box)
 
-        # Body splitter (live view + side panel)
-        body_splitter = QSplitter(Qt.Horizontal)
-        body_splitter.setChildrenCollapsible(False)
+        # Abas: Principal | Último evento | Estado e atividade
+        self.monitor_tabs = QTabWidget()
 
-        # Live view panel
+        # ---- Aba Principal: só vídeo + tabela de eventos recentes ----
+        main_tab = QWidget()
+        main_layout = QVBoxLayout(main_tab)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(10)
+
         live_panel = QGroupBox("Visualizacao ao vivo")
         live_layout = QVBoxLayout(live_panel)
-        live_layout.setContentsMargins(10, 10, 10, 10)
-
+        live_layout.setContentsMargins(8, 10, 8, 10)
         self.live_view = LiveViewController()
         self.live_view.status_changed.connect(self._on_live_view_status_changed)
-        self.live_view.setMinimumHeight(420)
-
+        self.live_view.setMinimumHeight(360)
         live_layout.addWidget(self.live_view, 1)
+        main_layout.addWidget(live_panel, 2)
 
-        # Side panel (event info + camera states + activity log)
-        side_panel = QWidget()
-        side_layout = QVBoxLayout(side_panel)
-        side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(10)
-
-        # Event info box
-        right_box = QGroupBox("Ultimo evento")
-        right_layout = QHBoxLayout(right_box)
-
-        form_wrap = QWidget()
-        form = self._create_form_layout(form_wrap)
-        right_layout.addWidget(form_wrap, 2)
-
-        # Thumbnail
-        self.monitor_thumbnail = QLabel("Sem imagem")
-        self.monitor_thumbnail.setAlignment(Qt.AlignCenter)
-        self.monitor_thumbnail.setMinimumSize(180, 120)
-        self.monitor_thumbnail.setStyleSheet(
-            "border: 1px solid #d7dee6; background: #fbfcfd; color: #687785;"
-        )
-        right_layout.addWidget(self.monitor_thumbnail, 1)
-
-        side_layout.addWidget(right_box)
-
-        # Camera states box
-        state_box = QGroupBox("Estado das cameras")
-        state_layout = QVBoxLayout(state_box)
-        state_layout.setContentsMargins(10, 10, 10, 10)
-
-        self.monitor_states = self._create_text_edit()
-        self.monitor_states.setMinimumWidth(320)
-        self.monitor_states.setStyleSheet(
-            "background: #fbfcfd; border: 1px solid #d7dee6; color: #243447;"
-        )
-
-        state_layout.addWidget(self.monitor_states)
-
-        # Activity log box
-        activity_box = QGroupBox("Atividade")
-        activity_layout = QVBoxLayout(activity_box)
-        activity_layout.setContentsMargins(10, 10, 10, 10)
-
-        self.monitor_log = self._create_text_edit()
-        self.monitor_log.setMinimumHeight(140)
-        self.monitor_log.setStyleSheet(
-            "background: white; border: 1px solid #d7dee6; color: #243447;"
-        )
-
-        activity_layout.addWidget(self.monitor_log)
-
-        side_layout.addWidget(state_box, 1)
-        side_layout.addWidget(activity_box, 1)
-
-        body_splitter.addWidget(live_panel)
-        body_splitter.addWidget(side_panel)
-        body_splitter.setStretchFactor(0, 5)
-        body_splitter.setStretchFactor(1, 3)
-
-        layout.addWidget(body_splitter, 3)
-
-        # Realtime events table
         table_box = QGroupBox("Eventos recentes")
         table_layout = QVBoxLayout(table_box)
-        table_layout.setContentsMargins(10, 10, 10, 10)
-
+        table_layout.setContentsMargins(8, 8, 8, 8)
         table_filter = QHBoxLayout()
         self.realtime_filter_camera = QComboBox()
         self.realtime_filter_camera.addItem("")
         self.realtime_filter_camera.currentTextChanged.connect(self.apply_realtime_filter)
-
+        self.realtime_max_rows_combo = QComboBox()
+        self.realtime_max_rows_combo.addItems([str(n) for n in REALTIME_MAX_ROWS_OPTIONS])
+        self.realtime_max_rows_combo.setCurrentText(str(DEFAULT_MAX_REALTIME_ROWS))
+        self.realtime_max_rows_combo.currentTextChanged.connect(self._on_realtime_max_rows_changed)
         table_filter.addWidget(QLabel("Filtrar camera"))
         table_filter.addWidget(self.realtime_filter_camera)
+        table_filter.addWidget(QLabel("Max. linhas"))
+        table_filter.addWidget(self.realtime_max_rows_combo)
         table_filter.addStretch(1)
-
         table_layout.addLayout(table_filter)
-
         self.realtime_table = QTableWidget(0, 6)
         self.realtime_table.setHorizontalHeaderLabels([
             "Camera", "Data/Hora", "Placa", "Velocidade", "Faixa", "Tipo"
         ])
         self._style_data_table(self.realtime_table)
         self.realtime_table.cellDoubleClicked.connect(self.open_realtime_event_image)
-
         table_layout.addWidget(self.realtime_table)
-        layout.addWidget(table_box, 2)
+        main_layout.addWidget(table_box, 3)
 
+        self.monitor_tabs.addTab(main_tab, "Principal")
+
+        # ---- Aba Último evento: thumbnail + dados do último evento ----
+        event_tab = QWidget()
+        event_layout = QVBoxLayout(event_tab)
+        event_layout.setContentsMargins(10, 10, 10, 10)
+
+        right_box = QGroupBox("Último evento")
+        right_box.setStyleSheet(
+            "QGroupBox { font-weight: bold; font-size: 13px; "
+            "border: 2px solid #0f4c5c; border-radius: 8px; margin-top: 10px; "
+            "padding: 12px 12px 8px 12px; padding-top: 18px; "
+            "background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #e8f4f8, stop:1 #f0f7fa); }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; "
+            "color: #0f4c5c; background: transparent; }"
+        )
+        right_layout = QVBoxLayout(right_box)
+        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(12, 16, 12, 12)
+
+        self.monitor_thumbnail = QLabel("Sem imagem")
+        self.monitor_thumbnail.setAlignment(Qt.AlignCenter)
+        self.monitor_thumbnail.setMinimumSize(280, 180)
+        self.monitor_thumbnail.setStyleSheet(
+            "border: 2px solid #b0c4ce; border-radius: 6px; "
+            "background: #fbfcfd; color: #687785; font-size: 12px;"
+        )
+        right_layout.addWidget(self.monitor_thumbnail)
+
+        form_wrap = QWidget()
+        self._create_form_layout(form_wrap)
+        right_layout.addWidget(form_wrap)
+
+        event_layout.addWidget(right_box)
+        self.monitor_tabs.addTab(event_tab, "Último evento")
+
+        # ---- Aba Estado e atividade: estado das câmeras + log ----
+        state_tab = QWidget()
+        state_tab_layout = QVBoxLayout(state_tab)
+        state_tab_layout.setContentsMargins(10, 10, 10, 10)
+        state_tab_layout.setSpacing(10)
+
+        state_box = QGroupBox("Estado das cameras")
+        state_layout = QVBoxLayout(state_box)
+        state_layout.setContentsMargins(10, 10, 10, 10)
+        self.monitor_states = self._create_text_edit()
+        self.monitor_states.setMinimumHeight(120)
+        self.monitor_states.setStyleSheet(
+            "background: #fbfcfd; border: 1px solid #d7dee6; color: #243447;"
+        )
+        state_layout.addWidget(self.monitor_states)
+
+        activity_box = QGroupBox("Atividade")
+        activity_layout = QVBoxLayout(activity_box)
+        activity_layout.setContentsMargins(10, 10, 10, 10)
+        self.monitor_log = self._create_text_edit()
+        self.monitor_log.setMinimumHeight(180)
+        self.monitor_log.setStyleSheet(
+            "background: white; border: 1px solid #d7dee6; color: #243447;"
+        )
+        activity_layout.addWidget(self.monitor_log)
+
+        state_tab_layout.addWidget(state_box, 1)
+        state_tab_layout.addWidget(activity_box, 1)
+        self.monitor_tabs.addTab(state_tab, "Estado e atividade")
+
+        layout.addWidget(self.monitor_tabs, 1)
         return layout
 
     def _create_form_layout(self, parent):
@@ -213,7 +226,9 @@ class MonitorTab(BaseTab):
         from PySide6.QtWidgets import QFormLayout
 
         form = QFormLayout(parent)
+        form.setSpacing(6)
 
+        # Labels dos valores – placa e velocidade em destaque
         self.lbl_cam = QLabel("-")
         self.lbl_plate = QLabel("-")
         self.lbl_speed = QLabel("-")
@@ -222,27 +237,36 @@ class MonitorTab(BaseTab):
         self.lbl_type = QLabel("-")
         self.lbl_image_status = QLabel("-")
 
-        self.lbl_cam.setStyleSheet("font-weight: 600; color: #1f2d3d;")
-        self.lbl_plate.setStyleSheet("font-weight: 700; font-size: 18px; color: #0f4c5c;")
-        self.lbl_speed.setStyleSheet("font-weight: 700; font-size: 18px; color: #8a3b12;")
+        self.lbl_cam.setStyleSheet("font-weight: 600; font-size: 12px; color: #1f2d3d;")
+        self.lbl_plate.setStyleSheet(
+            "font-weight: 700; font-size: 20px; color: #0f4c5c; "
+            "letter-spacing: 1px; padding: 2px 0;"
+        )
+        self.lbl_speed.setStyleSheet(
+            "font-weight: 700; font-size: 20px; color: #8a3b12; padding: 2px 0;"
+        )
+        self.lbl_lane.setStyleSheet("font-weight: 600; color: #243447;")
+        self.lbl_direction.setStyleSheet("font-weight: 600; color: #243447;")
+        self.lbl_type.setStyleSheet("font-weight: 600; color: #243447;")
         self.lbl_image_status.setWordWrap(True)
+        self.lbl_image_status.setStyleSheet("font-size: 11px; color: #52606d;")
 
-        form.addRow("Camera:", self.lbl_cam)
+        form.addRow("Câmera:", self.lbl_cam)
         form.addRow("Placa:", self.lbl_plate)
         form.addRow("Velocidade:", self.lbl_speed)
         form.addRow("Faixa:", self.lbl_lane)
-        form.addRow("Direcao:", self.lbl_direction)
+        form.addRow("Direção:", self.lbl_direction)
         form.addRow("Tipo:", self.lbl_type)
         form.addRow("Imagem:", self.lbl_image_status)
 
-        # Alert label
+        # Aviso de velocidade – mais visível
         self.monitor_alert = QLabel("Sem alerta de velocidade")
         self.monitor_alert.setWordWrap(True)
-        self.monitor_alert.setMinimumHeight(78)
+        self.monitor_alert.setMinimumHeight(56)
         self.monitor_alert.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.monitor_alert.setStyleSheet(
             "padding: 10px; border: 1px solid #c9d2dc; "
-            "background: #f4f7fa; color: #243447; border-radius: 6px;"
+            "background: #f4f7fa; color: #243447; border-radius: 6px; font-size: 12px;"
         )
 
         form.addRow("Aviso:", self.monitor_alert)
@@ -341,7 +365,7 @@ class MonitorTab(BaseTab):
         self.live_detection_check.blockSignals(False)
 
     def _on_live_detection_toggled(self, checked: bool):
-        """Persiste detecção ao vivo na câmera selecionada."""
+        """Persiste detecção ao vivo na câmera selecionada e reinicia o vídeo se estiver rodando."""
         config = self.get_config()
         if not config or not self.live_camera_combo:
             return
@@ -351,6 +375,8 @@ class MonitorTab(BaseTab):
             return
         cam["live_detection_enabled"] = bool(checked)
         config.save()
+        if self.live_view and self.live_view.current_mode != "idle":
+            QTimer.singleShot(0, self.start_live_view)
 
     def start_live_view(self):
         """Start live video view for selected camera."""
@@ -364,9 +390,10 @@ class MonitorTab(BaseTab):
         self.live_view_running = bool(cam)
 
         if cam:
-            self.live_status.setText(f"Camera: {name}")
+            self.live_status.setText("Conectando ao video ao vivo...")
+            self.live_view.start()
         else:
-            self.live_status.setText("Video ao vivo parado")
+            self.live_status.setText("Selecione uma camera para video ao vivo")
 
     def stop_live_view(self):
         """Stop live video view."""
@@ -390,7 +417,6 @@ class MonitorTab(BaseTab):
 
         if data.get("image_path"):
             self._set_preview(data["image_path"])
-            from PySide6.QtGui import QPixmap
             pixmap = QPixmap(data["image_path"])
             if not pixmap.isNull():
                 self.monitor_thumbnail.setPixmap(
@@ -488,8 +514,8 @@ class MonitorTab(BaseTab):
             if item:
                 item.setBackground(row_color)
 
-        # Limit rows
-        while self.realtime_table.rowCount() > 200:
+        # Limit rows (valor configurável em "Max. linhas")
+        while self.realtime_table.rowCount() > self.realtime_max_rows:
             self.realtime_table.removeRow(self.realtime_table.rowCount() - 1)
 
         self.apply_realtime_filter()
@@ -505,6 +531,15 @@ class MonitorTab(BaseTab):
         camera_name = data.get("camera_name", "")
         index = sum(ord(ch) for ch in camera_name) % len(palette)
         return QColor(palette[index])
+
+    def _on_realtime_max_rows_changed(self, text):
+        """Atualiza o limite de linhas da tabela de eventos recentes e remove excedentes."""
+        try:
+            self.realtime_max_rows = int(text)
+        except ValueError:
+            self.realtime_max_rows = DEFAULT_MAX_REALTIME_ROWS
+        while self.realtime_table.rowCount() > self.realtime_max_rows:
+            self.realtime_table.removeRow(self.realtime_table.rowCount() - 1)
 
     def apply_realtime_filter(self):
         """Apply camera filter to realtime table."""

@@ -35,6 +35,9 @@ replace_*.py
 .DS_Store
 Thumbs.db
 
+# Artefatos de teste
+test_config_*.json
+
 # Test coverage
 .coverage
 .pytest_cache/

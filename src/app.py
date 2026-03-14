@@ -1,5 +1,6 @@
 # Hikvision Radar Pro V4.2 – MainWindow e entry point (resto nos módulos config, database, etc.)
 import csv
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
 from src.core.camera_client import CameraClient
 from src.core.config import (
     APP_NAME,
+    APP_VERSION,
     DB_FILE,
     DEFAULT_ADMIN_USERNAME,
     DEFAULT_ADMIN_PASSWORD,
@@ -65,7 +67,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.logged_user = logged_user
-        self.setWindowTitle(f"{APP_NAME} - {logged_user.get('username')} ({logged_user.get('role')})")
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} - {logged_user.get('username')} ({logged_user.get('role')})")
         self.resize(1360, 900)
         self.setMinimumSize(QSize(1100, 740))
         default_output = Path(app_dir() / "output")
@@ -169,7 +171,7 @@ class MainWindow(QMainWindow):
         # Create dashboard tab
         self.tab_dashboard = DashboardTab(); self.tab_dashboard.set_main_window(self)
         # Create users tab
-        self.tab_users = UsersTab(); self.tab_users.set_main_window(self); self.tab_users.set_logged_user(self.logged_user)
+        self.tab_users = UsersTab(); self.tab_users.set_main_window(self); self.tab_users.set_logged_user(self.logged_user); self.tab_users.refresh_for_logged_user()
         # Create history and report tabs
         self.tab_history = HistoryTab(); self.tab_history.set_main_window(self)
         self.tab_report = ReportTab(); self.tab_report.set_main_window(self)
@@ -177,6 +179,7 @@ class MainWindow(QMainWindow):
         self.tab_cameras = CamerasTab(); self.tab_cameras.set_main_window(self)
         # Create evolution tab
         self.tab_evolution = EvolutionTab(); self.tab_evolution.set_main_window(self)
+        self.tab_evolution.load_settings_into_ui()
         # Create monitor tab
         self.tab_monitor = MonitorTab(); self.tab_monitor.set_main_window(self)
         tabs.addTab(self.build_scroll_tab(self.tab_dashboard), "Dashboard")
@@ -185,7 +188,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.build_scroll_tab(self.tab_history), "Historico")
         tabs.addTab(self.build_scroll_tab(self.tab_report), "Excesso de velocidade")
         tabs.addTab(self.build_scroll_tab(self.tab_evolution), "Evolution API")
-        tabs.addTab(self.build_scroll_tab(self.tab_users), "Usuarios")
+        if self.logged_user.get("role") == "Administrador":
+            tabs.addTab(self.build_scroll_tab(self.tab_users), "Usuarios")
 
         file_menu = self.menuBar().addMenu("Arquivo")
         act_export = QAction("Exportar historico CSV", self); act_export.triggered.connect(self.export_csv); file_menu.addAction(act_export)
@@ -294,13 +298,36 @@ class MainWindow(QMainWindow):
             self.apply_realtime_filter()
         if hasattr(self, "evo_status"):
             self.update_evolution_status_label()
+        self.update_camera_state_panel()
 
     def start_all_monitors(self):
-        self.stop_all_monitors(log_message=False); started = 0
+        self.stop_all_monitors(log_message=False)
+        started = 0
         for cam in self.config.data.get("cameras", []):
-            if not cam.get("enabled", True): continue
-            worker = EventWorker(cam); worker.status.connect(self.append_log); worker.connection_state.connect(self.on_connection_state); worker.event_received.connect(self.on_event_received); self.workers[cam["name"]] = worker; worker.start(); started += 1
+            if not cam.get("enabled", True):
+                continue
+            try:
+                worker = EventWorker(cam)
+                worker.status.connect(self.append_log)
+                worker.connection_state.connect(self.on_connection_state)
+                worker.event_received.connect(self.on_event_received)
+                self.workers[cam["name"]] = worker
+                worker.start()
+                started += 1
+            except Exception as e:
+                log_runtime_error(f"Iniciar monitor {cam.get('name', '?')}", e)
+                self.append_log(f"ERRO ao iniciar {cam.get('name', '?')}: {e}")
         self.append_log(f"Monitoramento iniciado para {started} camera(s).")
+        if started == 0:
+            self.append_log("Nenhuma camera habilitada. Va na aba Cameras, habilite pelo menos uma e tente novamente.")
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "Nenhuma câmera habilitada para monitorar.\n\n"
+                "Vá na aba Câmeras, confira se há pelo menos uma câmera e se a opção \"Habilitada\" está marcada.\n"
+                "Depois clique em \"Iniciar todas\" novamente."
+            )
+        self.update_camera_state_panel()
 
     def stop_all_monitors(self, log_message=True):
         for _, worker in list(self.workers.items()): worker.stop(); worker.wait(3000)
@@ -413,6 +440,7 @@ class MainWindow(QMainWindow):
 
     def on_event_received(self, data):
         """Process received event - updates monitor tab and handles alerts."""
+        self.append_log(f"Evento recebido: {data.get('camera_name', '-')} placa {data.get('plate') or '-'} velocidade {data.get('speed') or '-'}")
         # Update monitor tab event info
         self.tab_monitor.update_event_info(data)
 
@@ -549,7 +577,18 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self._allow_close or self.tray_icon is None:
             self.stop_live_view()
+            # Dar tempo ao Qt Multimedia (FFmpeg) para encerrar o thread do player
+            for _ in range(50):
+                QApplication.processEvents()
+                time.sleep(0.05)
             self.stop_all_monitors(log_message=False)
+            # Aguardar workers da Evolution API para evitar "QThread: Destroyed while thread is still running"
+            for w in list(self.evolution_workers):
+                w.wait(5000)
+            self.evolution_workers = []
+            test_worker = getattr(self.tab_evolution, "_test_send_worker", None)
+            if test_worker is not None and test_worker.isRunning():
+                test_worker.wait(5000)
             if self.tray_icon is not None:
                 self.tray_icon.hide()
             self.db.close()

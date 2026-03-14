@@ -93,6 +93,10 @@ class LiveViewController(QWidget):
             self._switching_mode = False
             self.start_snapshot_fallback("RTSP desativado para esta camera")
             return
+        if self.camera_cfg.get("live_detection_enabled", False):
+            self._switching_mode = False
+            self.start_snapshot_fallback("Detecção de carros ao vivo ativada")
+            return
         client = CameraClient(self.camera_cfg)
         self.current_mode = "rtsp"
         self.stack.setCurrentWidget(self.video_widget)
@@ -104,7 +108,7 @@ class LiveViewController(QWidget):
     def stop(self):
         if self.snapshot_worker:
             self.snapshot_worker.stop()
-            self.snapshot_worker.wait(2000)
+            self.snapshot_worker.wait(5000)
             self.snapshot_worker = None
         self.player.stop()
         self.player.setSource(QUrl())
@@ -120,7 +124,11 @@ class LiveViewController(QWidget):
         self.stack.setCurrentWidget(self.snapshot_label)
         self.show_message("Carregando snapshots ao vivo...")
         self.status_changed.emit(reason)
-        if not self.camera_cfg or self.camera_cfg.get("live_fallback_mode", "snapshot") != "snapshot":
+        use_snapshot = (
+            self.camera_cfg.get("live_fallback_mode", "snapshot") == "snapshot"
+            or self.camera_cfg.get("live_detection_enabled", False)
+        )
+        if not self.camera_cfg or not use_snapshot:
             self._switching_mode = False
             return
         self.snapshot_worker = LiveSnapshotWorker(self.camera_cfg)
@@ -197,7 +205,15 @@ class LoginDialog(QDialog):
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.try_login)
         btns.rejected.connect(self.reject)
+        ok_btn = btns.button(QDialogButtonBox.Ok)
+        if ok_btn:
+            ok_btn.setAutoDefault(True)
+            ok_btn.setDefault(True)
         layout.addWidget(btns)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.user_edit.setFocus()
 
     def try_login(self):
         user = self.config.authenticate(self.user_edit.text().strip(), self.pass_edit.text())

@@ -147,10 +147,11 @@ class EvolutionSendWorker(QThread):
             client = EvolutionApiClient(self.evolution_cfg)
             caption = self.build_caption()
             image_path = str(self.event_data.get("image_path", "") or "")
+            send_image = bool(image_path and Path(image_path).exists() and self.evolution_cfg.get("send_image_with_caption", True))
             sent = 0
             for number in self.recipients:
                 try:
-                    if image_path and Path(image_path).exists() and self.evolution_cfg.get("send_image_with_caption", True):
+                    if send_image:
                         client.send_media_message(number, caption, image_path)
                     else:
                         client.send_text_message(number, caption)
@@ -158,10 +159,18 @@ class EvolutionSendWorker(QThread):
                 except Exception:
                     client.send_text_message(number, caption)
                     sent += 1
-            self.finished_status.emit(f"Evolution API: alerta enviado para {sent} destinatario(s).")
+            if send_image:
+                self.finished_status.emit(f"Evolution API: alerta enviado para {sent} destinatario(s) (com foto).")
+            elif self.evolution_cfg.get("send_image_with_caption", True):
+                self.finished_status.emit(f"Evolution API: alerta enviado para {sent} destinatario(s) (sem foto: ative 'Salvar snapshot no evento' na aba Cameras).")
+            else:
+                self.finished_status.emit(f"Evolution API: alerta enviado para {sent} destinatario(s).")
         except Exception as exc:
             log_runtime_error("EvolutionSendWorker", exc)
-            self.finished_status.emit(f"Evolution API: falha no envio ({exc})")
+            self.finished_status.emit(
+                f"Evolution API: falha no envio ({exc}). "
+                "Verifique URL, token, nome da instancia e se a instancia esta conectada na aba Evolution API."
+            )
 
 
 class EvolutionTestSendWorker(QThread):

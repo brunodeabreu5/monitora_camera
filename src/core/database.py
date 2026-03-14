@@ -6,6 +6,9 @@ from pathlib import Path
 
 from .config import extract_speed_value
 
+# Limite de linhas nas consultas de Histórico e Relatório (evita travamento com muitos eventos)
+MAX_EVENTS_QUERY = 1000
+
 
 class Database:
     def __init__(self, db_path: Path):
@@ -59,26 +62,45 @@ class Database:
             ))
             self.conn.commit()
 
-    def filtered_events(self, camera_name="", plate="", date_text="", min_speed="", over_limit=None):
+    def _filtered_events_where(self, camera_name, plate, date_text, min_speed, over_limit):
+        """Retorna (query_where, params) para consultas de histórico (sem SELECT/LIMIT)."""
+        query = " WHERE 1=1"
+        params = []
+        if camera_name:
+            query += " AND camera_name = ?"; params.append(camera_name)
+        if plate:
+            query += " AND upper(plate) LIKE ?"; params.append(f"%{plate.upper()}%")
+        if date_text:
+            query += " AND ts LIKE ?"; params.append(f"%{date_text}%")
+        if min_speed:
+            try:
+                query += " AND speed_value >= ?"; params.append(float(min_speed))
+            except Exception:
+                pass
+        if over_limit is not None:
+            query += " AND speed_value > ?"; params.append(float(over_limit))
+        return query, params
+
+    def count_filtered_events(self, camera_name="", plate="", date_text="", min_speed="", over_limit=None) -> int:
+        """Retorna o total de eventos que atendem aos filtros (para paginação)."""
         with self.lock:
-            query = """SELECT camera_name, ts, plate, speed, lane, direction, event_type, image_path, json_path FROM events WHERE 1=1"""
-            params = []
-            if camera_name:
-                query += " AND camera_name = ?"; params.append(camera_name)
-            if plate:
-                query += " AND upper(plate) LIKE ?"; params.append(f"%{plate.upper()}%")
-            if date_text:
-                query += " AND ts LIKE ?"; params.append(f"%{date_text}%")
-            if min_speed:
-                try:
-                    query += " AND speed_value >= ?"; params.append(float(min_speed))
-                except Exception:
-                    pass
-            if over_limit is not None:
-                query += " AND speed_value > ?"; params.append(float(over_limit))
-            query += " ORDER BY id DESC LIMIT 1000"
+            where, params = self._filtered_events_where(camera_name, plate, date_text, min_speed, over_limit)
             cur = self.conn.cursor()
-            cur.execute(query, params)
+            cur.execute("SELECT COUNT(*) FROM events" + where, params)
+            return cur.fetchone()[0]
+
+    def filtered_events(self, camera_name="", plate="", date_text="", min_speed="", over_limit=None, limit=None, offset=0):
+        limit = limit if limit is not None else MAX_EVENTS_QUERY
+        with self.lock:
+            where, params = self._filtered_events_where(camera_name, plate, date_text, min_speed, over_limit)
+            params.append(limit)
+            params.append(offset)
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT camera_name, ts, plate, speed, lane, direction, event_type, image_path, json_path FROM events"
+                + where + " ORDER BY id DESC LIMIT ? OFFSET ?",
+                params
+            )
             return cur.fetchall()
 
     def recent_events_with_speed(self, camera_name="", date_text=""):
@@ -89,7 +111,8 @@ class Database:
                 query += " AND camera_name = ?"; params.append(camera_name)
             if date_text:
                 query += " AND ts LIKE ?"; params.append(f"%{date_text}%")
-            query += " ORDER BY id DESC LIMIT 1000"
+            query += " ORDER BY id DESC LIMIT ?"
+            params.append(MAX_EVENTS_QUERY)
             cur = self.conn.cursor()
             cur.execute(query, params)
             return cur.fetchall()
@@ -107,7 +130,7 @@ class Database:
 
     def dashboard_event_speeds(self):
         with self.lock:
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.now().strftime("%d/%m/%Y")
             cur = self.conn.cursor()
             total = cur.execute("SELECT COUNT(*) FROM events").fetchone()[0]
             today_count = cur.execute("SELECT COUNT(*) FROM events WHERE ts LIKE ?", (f"{today}%",)).fetchone()[0]

@@ -1,4 +1,5 @@
 # Cameras tab - manage camera configurations
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -136,6 +137,8 @@ class CamerasTab(BaseTab):
         # Additional settings
         self.cam_enabled = QCheckBox("Ativa para monitoramento")
         self.cam_snapshot = QCheckBox("Salvar snapshot automatico por evento")
+        self.cam_snapshot_url = QLineEdit()
+        self.cam_snapshot_url.setPlaceholderText("Opcional: URL de snapshot (ex.: http://IP:80/ISAPI/Streaming/channels/101/picture)")
 
         # Add all form fields
         form.addRow("Nome:", self.cam_name)
@@ -158,6 +161,7 @@ class CamerasTab(BaseTab):
         form.addRow("Pasta:", out_wrap)
         form.addRow("", self.cam_enabled)
         form.addRow("", self.cam_snapshot)
+        form.addRow("URL snapshot:", self.cam_snapshot_url)
 
         right_layout.addWidget(form_box)
 
@@ -256,6 +260,7 @@ class CamerasTab(BaseTab):
         self.cam_output.setText(cam.get("output_dir", str(app_dir() / "output")))
         self.cam_enabled.setChecked(bool(cam.get("enabled", True)))
         self.cam_snapshot.setChecked(bool(cam.get("save_snapshot_on_event", True)))
+        self.cam_snapshot_url.setText(cam.get("snapshot_url", ""))
 
     def current_camera_form(self) -> dict:
         """Get camera data from the form."""
@@ -282,6 +287,7 @@ class CamerasTab(BaseTab):
             "evolution_enabled": self.cam_evolution_enabled.isChecked(),
             "output_dir": self.cam_output.text().strip() or default_output,
             "save_snapshot_on_event": self.cam_snapshot.isChecked(),
+            "snapshot_url": self.cam_snapshot_url.text().strip(),
             "camera_mode": self.cam_mode.currentText()
         }
 
@@ -312,11 +318,32 @@ class CamerasTab(BaseTab):
         self.cam_output.setText(str(app_dir() / "output"))
         self.cam_enabled.setChecked(True)
         self.cam_snapshot.setChecked(True)
+        self.cam_snapshot_url.clear()
         self.cam_mode.setCurrentText("auto")
+
+    def _validate_camera_form(self, cam: dict) -> tuple[bool, str | None]:
+        """Retorna (True, None) se valido; (False, mensagem) se invalido."""
+        ip = (cam.get("camera_ip") or "").strip()
+        if not ip:
+            return False, "Informe o IP ou endereco da camera."
+        if not re.match(r"^[\w.\-]+$", ip) and not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip):
+            return False, "IP ou endereco invalido. Use um hostname ou endereco IPv4 (ex.: 192.168.1.64)."
+        port = cam.get("camera_port")
+        try:
+            p = int(port)
+            if p < 1 or p > 65535:
+                return False, "Porta HTTP deve estar entre 1 e 65535."
+        except (TypeError, ValueError):
+            return False, "Porta HTTP deve ser um numero."
+        return True, None
 
     def save_camera(self):
         """Save the current camera data from the form."""
         cam = self.current_camera_form()
+        ok, err = self._validate_camera_form(cam)
+        if not ok:
+            QMessageBox.warning(self, APP_NAME, err)
+            return
         Path(cam["output_dir"]).mkdir(parents=True, exist_ok=True)
 
         config = self.get_config()
@@ -408,5 +435,7 @@ class CamerasTab(BaseTab):
         except Exception as e:
             QMessageBox.warning(
                 self, APP_NAME,
-                f"Snapshot nao suportado nesse firmware.\n\nDetalhe:\n{e}"
+                f"Snapshot nao disponivel.\n\nDetalhe: {e}\n\n"
+                "Sugestoes: confira usuario e senha; na aba Cameras use o campo 'URL snapshot' com uma URL que funcione "
+                "(ex.: http://IP:80/ISAPI/Streaming/channels/101/picture); ou teste a conexao com 'Testar conexao'."
             )

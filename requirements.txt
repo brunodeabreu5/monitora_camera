@@ -1,0 +1,3 @@
+# Dependências do Hikvision Radar Pro V4.2
+# Ver também: configs/requirements_hikvision_pro_v4.txt
+-r configs/requirements_hikvision_pro_v4.txt

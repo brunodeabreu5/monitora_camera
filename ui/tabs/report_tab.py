@@ -1,4 +1,5 @@
 # Report tab - overspeed events report with export
+import math
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
     QLineEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QSpinBox
@@ -20,6 +21,13 @@ class ReportTab(BaseTab):
         self.report_date = None
         self.report_summary = None
         self.report_table = None
+        self._report_overspeed_rows = []
+        self.report_page = 1
+        self.report_page_size = 100
+        self.report_btn_prev = None
+        self.report_btn_next = None
+        self.report_label_page = None
+        self.report_page_size_combo = None
         self.build_ui()
 
     def build_ui(self):
@@ -41,6 +49,7 @@ class ReportTab(BaseTab):
         self.report_camera.addItem("")
 
         self.report_date = QLineEdit()
+        self.report_date.setPlaceholderText("DD/MM/AAAA ou AAAA-MM-DD")
 
         btn_apply = QPushButton("Aplicar")
         btn_apply.clicked.connect(self.apply_and_refresh)
@@ -68,6 +77,26 @@ class ReportTab(BaseTab):
         self.report_summary.setStyleSheet("font-weight: 600; color: #486581;")
         summary_layout.addWidget(self.report_summary)
         layout.addWidget(summary_box)
+
+        # Paginação do relatório
+        pagination_layout = QHBoxLayout()
+        self.report_page_size_combo = QComboBox()
+        self.report_page_size_combo.addItems(["50", "100", "250", "500"])
+        self.report_page_size_combo.setCurrentText("100")
+        self.report_page_size_combo.currentTextChanged.connect(self._on_report_page_size_changed)
+        self.report_btn_prev = QPushButton("Anterior")
+        self.report_btn_prev.clicked.connect(self._report_prev_page)
+        self.report_label_page = QLabel("Pagina 1 de 1 (Total: 0)")
+        self.report_label_page.setStyleSheet("font-weight: 600; color: #486581;")
+        self.report_btn_next = QPushButton("Proxima")
+        self.report_btn_next.clicked.connect(self._report_next_page)
+        for w in [
+            QLabel("Registros por pagina"), self.report_page_size_combo,
+            self.report_btn_prev, self.report_label_page, self.report_btn_next
+        ]:
+            pagination_layout.addWidget(w)
+        pagination_layout.addStretch(1)
+        layout.addLayout(pagination_layout)
 
         # Report table
         self.report_table = QTableWidget(0, 9)
@@ -124,23 +153,30 @@ class ReportTab(BaseTab):
         if self.main_window and hasattr(self.main_window, "refresh_dashboard"):
             self.main_window.refresh_dashboard()
 
-    def refresh(self):
+    def refresh(self, reset_page: bool = True):
         """Refresh the report table with overspeed data."""
         db = self.get_database()
         if not db:
             return
+        if reset_page:
+            self.report_page = 1
 
         selected_camera = self.report_camera.currentText().strip()
         rows = db.recent_events_with_speed(
             camera_name=selected_camera,
             date_text=self.report_date.text().strip()
         )
+        self._report_overspeed_rows = self._filter_overspeed_rows(rows, selected_camera)
 
-        # Filter overspeed rows
-        overspeed_rows = self._filter_overspeed_rows(rows, selected_camera)
+        total = len(self._report_overspeed_rows)
+        total_pages = max(1, math.ceil(total / self.report_page_size))
+        self.report_page = max(1, min(self.report_page, total_pages))
+        start = (self.report_page - 1) * self.report_page_size
+        end = start + self.report_page_size
+        page_rows = self._report_overspeed_rows[start:end]
 
-        self.report_table.setRowCount(len(overspeed_rows))
-        for r, row in enumerate(overspeed_rows):
+        self.report_table.setRowCount(len(page_rows))
+        for r, row in enumerate(page_rows):
             display_row = (
                 row[EVT_IDX_CAMERA_NAME], row[EVT_IDX_TS], row[EVT_IDX_PLATE],
                 row[EVT_IDX_SPEED], row[EVT_IDX_LANE], row[EVT_IDX_DIRECTION],
@@ -149,11 +185,39 @@ class ReportTab(BaseTab):
             for c, val in enumerate(display_row):
                 self.report_table.setItem(r, c, QTableWidgetItem(str(val or "")))
 
-        # Update summary
+        if self.report_label_page:
+            self.report_label_page.setText(
+                f"Pagina {self.report_page} de {total_pages} (Total: {total})"
+            )
+        if self.report_btn_prev is not None:
+            self.report_btn_prev.setEnabled(self.report_page > 1)
+        if self.report_btn_next is not None:
+            self.report_btn_next.setEnabled(self.report_page < total_pages)
+
         summary_limit = self.speed_limit_spin.value() if not selected_camera else self._get_camera_speed_limit(selected_camera)
         self.report_summary.setText(
-            f"Limite base: {summary_limit} km/h | Eventos acima do limite efetivo: {len(overspeed_rows)}"
+            f"Limite base: {summary_limit} km/h | Eventos acima do limite efetivo: {total}"
         )
+
+    def _on_report_page_size_changed(self, text):
+        try:
+            self.report_page_size = int(text)
+        except ValueError:
+            self.report_page_size = 100
+        self.report_page = 1
+        self.refresh(reset_page=True)
+
+    def _report_prev_page(self):
+        if self.report_page > 1:
+            self.report_page -= 1
+            self.refresh(reset_page=False)
+
+    def _report_next_page(self):
+        total = len(self._report_overspeed_rows)
+        total_pages = max(1, math.ceil(total / self.report_page_size))
+        if self.report_page < total_pages:
+            self.report_page += 1
+            self.refresh(reset_page=False)
 
     def _filter_overspeed_rows(self, rows, selected_camera=""):
         """Filter rows to only include overspeed events."""

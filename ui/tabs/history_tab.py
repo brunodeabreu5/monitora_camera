@@ -1,14 +1,15 @@
 # History tab - view and filter event history
+import math
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QCheckBox,
-    QLineEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem
+    QLineEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QSpinBox
 )
 
 from .base_tab import BaseTab
 
 
 class HistoryTab(BaseTab):
-    """History tab for viewing and filtering event history."""
+    """History tab for viewing and filtering event history with pagination."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -17,6 +18,13 @@ class HistoryTab(BaseTab):
         self.hist_date = None
         self.hist_min_speed = None
         self.history_table = None
+        self.hist_page = 1
+        self.hist_total_count = 0
+        self.hist_page_size = 100
+        self.hist_label_page = None
+        self.hist_btn_prev = None
+        self.hist_btn_next = None
+        self.hist_page_size_combo = None
         self.build_ui()
 
     def build_ui(self):
@@ -32,11 +40,12 @@ class HistoryTab(BaseTab):
 
         self.hist_plate = QLineEdit()
         self.hist_date = QLineEdit()
+        self.hist_date.setPlaceholderText("DD/MM/AAAA ou AAAA-MM-DD")
         self.hist_min_speed = QLineEdit()
         self.hist_over_limit = QCheckBox("So excesso de velocidade")
 
         btn_filter = QPushButton("Filtrar")
-        btn_filter.clicked.connect(self.refresh)
+        btn_filter.clicked.connect(lambda: self.refresh(reset_page=True))
 
         for widget in [
             QLabel("Camera"), self.hist_camera,
@@ -49,6 +58,26 @@ class HistoryTab(BaseTab):
             filters_layout.addWidget(widget)
 
         layout.addWidget(filters_box)
+
+        # Paginação
+        pagination_layout = QHBoxLayout()
+        self.hist_page_size_combo = QComboBox()
+        self.hist_page_size_combo.addItems(["50", "100", "250", "500"])
+        self.hist_page_size_combo.setCurrentText("100")
+        self.hist_page_size_combo.currentTextChanged.connect(self._on_page_size_changed)
+        self.hist_btn_prev = QPushButton("Anterior")
+        self.hist_btn_prev.clicked.connect(self._prev_page)
+        self.hist_label_page = QLabel("Pagina 1 de 1 (Total: 0)")
+        self.hist_label_page.setStyleSheet("font-weight: 600; color: #486581;")
+        self.hist_btn_next = QPushButton("Proxima")
+        self.hist_btn_next.clicked.connect(self._next_page)
+        pagination_layout.addWidget(QLabel("Registros por pagina:"))
+        pagination_layout.addWidget(self.hist_page_size_combo)
+        pagination_layout.addWidget(self.hist_btn_prev)
+        pagination_layout.addWidget(self.hist_label_page)
+        pagination_layout.addWidget(self.hist_btn_next)
+        pagination_layout.addStretch(1)
+        layout.addLayout(pagination_layout)
 
         # History table
         self.history_table = QTableWidget(0, 9)
@@ -118,22 +147,36 @@ class HistoryTab(BaseTab):
                 return float(cam.get("speed_limit_value", 60))
         return float(config.data.get("speed_limit", 60))
 
-    def refresh(self):
+    def refresh(self, reset_page: bool = False):
         """Refresh the history table with filtered data."""
         db = self.get_database()
         if not db:
             return
+        if reset_page:
+            self.hist_page = 1
 
         over_limit = None
         if self.hist_over_limit.isChecked():
             over_limit = self._get_speed_limit_for_filter()
+
+        self.hist_total_count = db.count_filtered_events(
+            camera_name=self.hist_camera.currentText().strip(),
+            plate=self.hist_plate.text().strip(),
+            date_text=self.hist_date.text().strip(),
+            min_speed=self.hist_min_speed.text().strip(),
+            over_limit=over_limit
+        )
+        total_pages = max(1, math.ceil(self.hist_total_count / self.hist_page_size))
+        self.hist_page = max(1, min(self.hist_page, total_pages))
 
         rows = db.filtered_events(
             camera_name=self.hist_camera.currentText().strip(),
             plate=self.hist_plate.text().strip(),
             date_text=self.hist_date.text().strip(),
             min_speed=self.hist_min_speed.text().strip(),
-            over_limit=over_limit
+            over_limit=over_limit,
+            limit=self.hist_page_size,
+            offset=(self.hist_page - 1) * self.hist_page_size
         )
 
         self.history_table.setRowCount(len(rows))
@@ -141,8 +184,37 @@ class HistoryTab(BaseTab):
             for c, val in enumerate(row):
                 self.history_table.setItem(r, c, QTableWidgetItem(str(val or "")))
 
+        self._update_pagination_label(total_pages)
+        self.hist_btn_prev.setEnabled(self.hist_page > 1)
+        self.hist_btn_next.setEnabled(self.hist_page < total_pages)
+
         # Apply styling after refresh
         self._style_table()
+
+    def _on_page_size_changed(self, text):
+        try:
+            self.hist_page_size = int(text)
+        except ValueError:
+            self.hist_page_size = 100
+        self.hist_page = 1
+        self.refresh()
+
+    def _prev_page(self):
+        if self.hist_page > 1:
+            self.hist_page -= 1
+            self.refresh()
+
+    def _next_page(self):
+        total_pages = max(1, math.ceil(self.hist_total_count / self.hist_page_size))
+        if self.hist_page < total_pages:
+            self.hist_page += 1
+            self.refresh()
+
+    def _update_pagination_label(self, total_pages: int):
+        if self.hist_label_page:
+            self.hist_label_page.setText(
+                f"Pagina {self.hist_page} de {total_pages} (Total: {self.hist_total_count})"
+            )
 
     def open_item(self, row: int, _column: int):
         """Open the event artifact (image or JSON) for the selected row."""

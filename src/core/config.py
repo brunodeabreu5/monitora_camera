@@ -3,10 +3,12 @@ import sys
 import json
 import re
 import hashlib
+import secrets
 from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "Hikvision Radar Pro V4.2"
+APP_VERSION = "4.2.0"
 CONFIG_FILE = "hikvision_pro_v42_config.json"
 DB_FILE = "events_v42.db"
 DEFAULT_ADMIN_USERNAME = "admin"
@@ -27,9 +29,18 @@ EVT_IDX_APPLIED_LIMIT = 10
 EVT_IDX_IS_OVERSPEED = 11
 
 
+def _sanitize_log_message(text: str) -> str:
+    """Remove trechos que podem conter senha em URLs (ex.: http://user:senha@host) nos logs."""
+    if not text:
+        return text
+    # Redact :senha@ em URLs para nao gravar credenciais no log
+    return re.sub(r":([^@\s]+)@", ":***@", str(text))
+
+
 def log_runtime_error(context: str, exc: Exception):
     stamp = now_str()
-    message = f"[{stamp}] {context}: {exc}"
+    raw = f"[{stamp}] {context}: {exc}"
+    message = _sanitize_log_message(raw)
     print(message, file=sys.stderr)
     try:
         log_path = app_dir() / "hikvision_pro_v42.log"
@@ -46,8 +57,35 @@ def app_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+# Formato de data/hora exibido no app (padrão brasileiro)
+DATETIME_FMT_BR = "%d/%m/%Y %H:%M:%S"
+
+
+def format_datetime_br(ts_str: str | None) -> str:
+    """Converte data/hora (ISO ou YYYY-MM-DD HH:MM:SS) para DD/MM/YYYY HH:MM:SS. Retorna o original se não conseguir parsear."""
+    if not ts_str or not str(ts_str).strip():
+        return ""
+    raw = str(ts_str).strip()
+    try:
+        # ISO com T e opcional timezone: 2026-03-14T12:12:16.722-03:00
+        if "T" in raw:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return dt.strftime(DATETIME_FMT_BR)
+        # Espaço: 2026-03-14 12:12:16
+        if " " in raw:
+            dt = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+            return dt.strftime(DATETIME_FMT_BR)
+        # Só data: 2026-03-14
+        if len(raw) >= 10:
+            dt = datetime.strptime(raw[:10], "%Y-%m-%d")
+            return dt.strftime(DATETIME_FMT_BR)
+    except (ValueError, TypeError):
+        pass
+    return raw
+
+
 def now_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime(DATETIME_FMT_BR)
 
 
 def sanitize_filename(text: str) -> str:
@@ -105,7 +143,7 @@ def render_event_message(template: str, event_data: dict) -> str:
         "plate": str(event_data.get("plate") or "-"),
         "speed": str(event_data.get("speed") or "-"),
         "limit": str(int(float(event_data.get("applied_speed_limit") or 0))) if event_data.get("applied_speed_limit") is not None else "-",
-        "ts": str(event_data.get("ts") or "-"),
+        "ts": format_datetime_br(event_data.get("ts")) or "-",
         "lane": str(event_data.get("lane") or "-"),
         "direction": str(event_data.get("direction") or "-"),
         "event_type": str(event_data.get("event_type") or "-"),
@@ -118,16 +156,29 @@ def render_event_message(template: str, event_data: dict) -> str:
     return text
 
 
-def hash_password(password: str) -> str:
+def _hash_legacy(password: str) -> str:
+    """Hash without salt (legacy). Used only for verifying old users."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
+    """Return (password_hash, salt). If salt is None, a new one is generated."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    value = (salt + password).encode("utf-8")
+    digest = hashlib.sha256(value).hexdigest()
+    return digest, salt
+
+
 def verify_password(user: dict, password: str) -> bool:
-    password_hash = user.get("password_hash", "")
-    if password_hash:
-        return hash_password(password) == password_hash
-    legacy_password = user.get("password")
-    return legacy_password == password
+    stored = user.get("password_hash", "")
+    if not stored:
+        return user.get("password") == password
+    salt = user.get("password_salt")
+    if salt:
+        h, _ = hash_password(password, salt)
+        return h == stored
+    return _hash_legacy(password) == stored
 
 
 class AppConfig:
@@ -142,9 +193,11 @@ class AppConfig:
         self.load()
 
     def _default_admin_user(self) -> dict:
+        pwd_hash, pwd_salt = hash_password(DEFAULT_ADMIN_PASSWORD)
         return {
             "username": DEFAULT_ADMIN_USERNAME,
-            "password_hash": hash_password(DEFAULT_ADMIN_PASSWORD),
+            "password_hash": pwd_hash,
+            "password_salt": pwd_salt,
             "role": "Administrador",
             "must_change_password": True,
         }
@@ -161,6 +214,7 @@ class AppConfig:
             "timeout": 15,
             "output_dir": str(app_dir() / "output"),
             "save_snapshot_on_event": True,
+            "snapshot_url": "",
             "camera_mode": "auto",
             "speed_limit_enabled": True,
             "speed_limit_value": 60,
@@ -206,7 +260,9 @@ class AppConfig:
                 continue
             user = dict(raw_user)
             if user.get("password") and not user.get("password_hash"):
-                user["password_hash"] = hash_password(user["password"])
+                pwd_hash, pwd_salt = hash_password(user["password"])
+                user["password_hash"] = pwd_hash
+                user["password_salt"] = pwd_salt
             user.pop("password", None)
             user.setdefault("role", "Operador")
             user["must_change_password"] = bool(user.get("must_change_password", False))
@@ -231,6 +287,7 @@ class AppConfig:
             camera["camera_pass"] = str(camera.get("camera_pass", ""))
             camera["output_dir"] = str(camera.get("output_dir", defaults["output_dir"]))
             camera["save_snapshot_on_event"] = bool(camera.get("save_snapshot_on_event", True))
+            camera["snapshot_url"] = str(camera.get("snapshot_url", "")).strip()
             camera["camera_mode"] = str(camera.get("camera_mode", "auto"))
             camera["speed_limit_enabled"] = bool(camera.get("speed_limit_enabled", True))
             camera["speed_alert_visual"] = bool(camera.get("speed_alert_visual", True))
@@ -318,6 +375,7 @@ class AppConfig:
         self._normalize_users()
         self._normalize_cameras()
         self._normalize_evolution_api()
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
         self.filepath.write_text(json.dumps(self.data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def get_camera_names(self):
@@ -341,9 +399,17 @@ class AppConfig:
         self.data["cameras"] = [c for c in self.data.get("cameras", []) if c.get("name") != name]
 
     def authenticate(self, username, password):
-        for user in self.data.get("users", []):
-            if user.get("username") == username and verify_password(user, password):
-                return dict(user)
+        users = self.data.get("users", [])
+        for i, user in enumerate(users):
+            if user.get("username") != username or not verify_password(user, password):
+                continue
+            if not user.get("password_salt"):
+                pwd_hash, pwd_salt = hash_password(password)
+                users[i] = dict(user)
+                users[i]["password_hash"] = pwd_hash
+                users[i]["password_salt"] = pwd_salt
+                self.save()
+            return dict(users[i])
         return None
 
     def upsert_user(self, user_data):

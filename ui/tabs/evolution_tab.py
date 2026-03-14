@@ -91,8 +91,9 @@ class EvolutionTab(BaseTab):
         self.evo_recipients = QTextEdit()
         self.evo_recipients.setPlaceholderText("5511999999999\n5511888888888")
         self.evo_recipients.setMaximumHeight(90)
-        self.evo_send_image = QCheckBox("Enviar imagem com legenda")
+        self.evo_send_image = QCheckBox("Enviar foto com a mensagem (snapshot da camera no momento do evento)")
         self.evo_send_image.setChecked(True)
+        self.evo_send_image.setToolTip("Ative tambem 'Salvar snapshot no evento' na aba Cameras para cada camera que deve enviar imagem.")
 
         form.addRow("", self.evo_enabled)
         form.addRow("URL:", self.evo_url)
@@ -312,16 +313,45 @@ class EvolutionTab(BaseTab):
         self._update_status_label()
         self._update_template_preview()
 
-    def save_settings(self):
-        """Save Evolution API settings from the form to config."""
+    def _persist_evolution_config(self) -> bool:
+        """Write current form to config and save to disk. Returns True on success."""
         config = self.get_config()
         if not config:
-            return
+            QMessageBox.warning(self, APP_NAME, "Configuracao indisponivel. Reinicie o aplicativo.")
+            return False
+        form = self.current_form()
+        if form.get("enabled"):
+            if not (form.get("base_url") or "").strip():
+                QMessageBox.warning(self, APP_NAME, "Com a integracao habilitada, informe a URL da Evolution API.")
+                return False
+            if not (form.get("api_token") or "").strip():
+                QMessageBox.warning(self, APP_NAME, "Com a integracao habilitada, informe o Token da Evolution API.")
+                return False
+            if not (form.get("instance_name") or "").strip():
+                QMessageBox.warning(self, APP_NAME, "Com a integracao habilitada, informe o nome da Instancia.")
+                return False
+        config.data["evolution_api"] = form
+        try:
+            config.save()
+            return True
+        except Exception as e:
+            QMessageBox.critical(
+                self, APP_NAME,
+                f"Nao foi possivel salvar a configuracao em disco:\n{config.filepath}\n\n{e}"
+            )
+            return False
 
-        config.data["evolution_api"] = self.current_form()
-        config.save()
+    def save_settings(self):
+        """Salva a configuracao da Evolution API em disco (mesmo arquivo das cameras: hikvision_pro_v42_config.json)."""
+        if not self._persist_evolution_config():
+            return
         self.load_settings_into_ui()
-        QMessageBox.information(self, APP_NAME, "Configuracao da Evolution API salva.")
+        config = self.get_config()
+        path_msg = str(config.filepath) if config else ""
+        QMessageBox.information(
+            self, APP_NAME,
+            f"Configuracao da Evolution API salva com sucesso em:\n{path_msg}"
+        )
 
     def _update_status_label(self, extra_text: str = ""):
         """Update the status label with current Evolution API status."""
@@ -498,7 +528,10 @@ class EvolutionTab(BaseTab):
 
     def _on_test_send_finished(self, error_msg):
         """Chamado quando o envio de teste termina."""
+        worker = self._test_send_worker
         self._test_send_worker = None
+        if worker is not None:
+            worker.wait(5000)
         self._hide_sending_indicator()
         number = sanitize_phone_number(self.evo_test_number.text())
 
@@ -556,7 +589,9 @@ class EvolutionTab(BaseTab):
         worker.start()
 
     def _release_worker(self, worker):
-        """Remove worker from tracking when done."""
+        """Remove worker from tracking when done; wait for thread to avoid QThread destroyed while running."""
+        if worker is not None:
+            worker.wait(5000)
         if self.main_window and hasattr(self.main_window, "evolution_workers"):
             if worker in self.main_window.evolution_workers:
                 self.main_window.evolution_workers.remove(worker)
