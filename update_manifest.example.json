@@ -1,0 +1,6 @@
+{
+  "version": "4.2.0",
+  "exe_path": "HikvisionRadarProV42.exe",
+  "installer_url": "https://github.com/SEU_USUARIO/SEU_REPOSITORIO/releases/download/v4.2.0/HikvisionRadarPro-4.2.0-setup.exe",
+  "release_notes_url": "https://github.com/SEU_USUARIO/SEU_REPOSITORIO/releases/tag/v4.2.0"
+}

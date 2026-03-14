@@ -1,0 +1,49 @@
+{
+  "speed_limit": 10,
+  "users": [
+    {
+      "username": "admin",
+      "password_hash": "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918",
+      "role": "Administrador",
+      "must_change_password": true
+    }
+  ],
+  "cameras": [
+    {
+      "name": "Camera 1",
+      "enabled": true,
+      "camera_ip": "192.168.1.64",
+      "camera_port": 80,
+      "camera_user": "admin",
+      "camera_pass": "H4ck3rg4soft@",
+      "channel": 101,
+      "timeout": 15,
+      "output_dir": "C:\\Users\\userss\\Documents\\github\\hikvision_camera\\output",
+      "save_snapshot_on_event": true,
+      "camera_mode": "traffic",
+      "speed_limit_enabled": true,
+      "speed_limit_value": 10,
+      "speed_alert_visual": true,
+      "rtsp_enabled": true,
+      "rtsp_port": 554,
+      "rtsp_transport": "udp",
+      "rtsp_url": "rtsp://admin:H4ck3rg4soft%40@192.168.1.64:554/Streaming/Channels/101",
+      "live_fallback_mode": "snapshot",
+      "evolution_enabled": true
+    }
+  ],
+  "evolution_api": {
+    "enabled": true,
+    "base_url": "https://evoapinovus.novusiopy.com",
+    "api_token": "ae80ff0ae9aac5574d2732fdb50ad12c",
+    "instance_name": "NovusioPY",
+    "instance_mode": "existing",
+    "recipient_numbers": [
+      "5555996342727"
+    ],
+    "send_image_with_caption": true,
+    "test_target_number": "5555996342727",
+    "test_message_text": "Teste de conexao Evolution API",
+    "event_message_template": "Alerta de velocidade\nCamera: {camera}\nPlaca: {plate}\nVelocidade: {speed} km/h\nLimite: {limit} km/h\nData/Hora: {ts}\nFaixa: {lane}\nDirecao: {direction}\nTipo: {event_type}"
+  }
+}

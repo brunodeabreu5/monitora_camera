@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+
+build/
+dist/
+release/
+
+local_update/*.exe
+*.spec.bak
+*.log
+
+output/
+*.db
