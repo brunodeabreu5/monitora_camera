@@ -46,6 +46,8 @@ from ui.widgets import LiveViewController, PasswordField
 from ui.workers import EventWorker, LiveSnapshotWorker
 from ui.tabs.dashboard_tab import DashboardTab
 from ui.tabs.users_tab import UsersTab
+from ui.tabs.history_tab import HistoryTab
+from ui.tabs.report_tab import ReportTab
 
 
 def color_from_name(text: str) -> QColor:
@@ -162,7 +164,10 @@ class MainWindow(QMainWindow):
         self.tab_dashboard = DashboardTab(); self.tab_dashboard.set_main_window(self)
         # Create users tab
         self.tab_users = UsersTab(); self.tab_users.set_main_window(self); self.tab_users.set_logged_user(logged_user)
-        self.tab_cameras = QWidget(); self.tab_monitor = QWidget(); self.tab_history = QWidget(); self.tab_report = QWidget(); self.tab_evolution = QWidget()
+        # Create history and report tabs
+        self.tab_history = HistoryTab(); self.tab_history.set_main_window(self)
+        self.tab_report = ReportTab(); self.tab_report.set_main_window(self)
+        self.tab_cameras = QWidget(); self.tab_monitor = QWidget(); self.tab_evolution = QWidget()
         tabs.addTab(self.build_scroll_tab(self.tab_dashboard), "Dashboard")
         tabs.addTab(self.build_scroll_tab(self.tab_cameras), "Cameras")
         tabs.addTab(self.build_scroll_tab(self.tab_monitor), "Monitor")
@@ -171,7 +176,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.build_scroll_tab(self.tab_evolution), "Evolution API")
         tabs.addTab(self.build_scroll_tab(self.tab_users), "Usuarios")
 
-        self.build_cameras_tab(); self.build_monitor_tab(); self.build_history_tab(); self.build_report_tab(); self.build_evolution_tab()
+        self.build_cameras_tab(); self.build_monitor_tab(); self.build_evolution_tab()
         file_menu = self.menuBar().addMenu("Arquivo")
         act_export = QAction("Exportar historico CSV", self); act_export.triggered.connect(self.export_csv); file_menu.addAction(act_export)
         act_export_over = QAction("Exportar excesso CSV", self); act_export_over.triggered.connect(self.export_overspeed_csv); file_menu.addAction(act_export_over)
@@ -369,31 +374,6 @@ class MainWindow(QMainWindow):
         table_layout.addWidget(self.realtime_table)
         layout.addWidget(table_box, 2)
 
-    def build_history_tab(self):
-        layout = QVBoxLayout(self.tab_history)
-        filters_box = QGroupBox("Filtros"); filters_layout = QHBoxLayout(filters_box)
-        self.hist_camera = QComboBox(); self.hist_camera.addItem(""); self.hist_plate = QLineEdit(); self.hist_date = QLineEdit(); self.hist_min_speed = QLineEdit()
-        btn_filter = QPushButton("Filtrar"); btn_filter.clicked.connect(self.refresh_history)
-        for widget in [QLabel("Camera"), self.hist_camera, QLabel("Placa"), self.hist_plate, QLabel("Data"), self.hist_date, QLabel("Veloc. min."), self.hist_min_speed, btn_filter]:
-            filters_layout.addWidget(widget)
-        layout.addWidget(filters_box)
-        self.history_table = QTableWidget(0,9); self.history_table.setHorizontalHeaderLabels(["Camera","Data/Hora","Placa","Velocidade","Faixa","Direcao","Tipo","Imagem","JSON"]); self.style_data_table(self.history_table); self.history_table.cellDoubleClicked.connect(self.open_history_item); layout.addWidget(self.history_table)
-
-    def build_report_tab(self):
-        layout = QVBoxLayout(self.tab_report)
-        top_box = QGroupBox("Parametros do relatorio"); top = QHBoxLayout(top_box)
-        self.speed_limit_spin = QSpinBox(); self.speed_limit_spin.setRange(1,300); self.speed_limit_spin.setValue(int(self.config.data.get("speed_limit", 60)))
-        self.report_camera = QComboBox(); self.report_camera.addItem(""); self.report_date = QLineEdit()
-        btn_apply = QPushButton("Aplicar"); btn_apply.clicked.connect(self.apply_speed_limit_and_refresh_report)
-        btn_export = QPushButton("Exportar CSV"); btn_export.clicked.connect(self.export_overspeed_csv)
-        for widget in [QLabel("Limite (km/h)"), self.speed_limit_spin, QLabel("Camera"), self.report_camera, QLabel("Data"), self.report_date, btn_apply, btn_export]:
-            top.addWidget(widget)
-        top.addStretch(1); layout.addWidget(top_box)
-        summary_box = QGroupBox("Resumo")
-        summary_layout = QVBoxLayout(summary_box)
-        self.report_summary = QLabel("-"); self.report_summary.setWordWrap(True); self.report_summary.setStyleSheet("font-weight: 600; color: #486581;"); summary_layout.addWidget(self.report_summary); layout.addWidget(summary_box)
-        self.report_table = QTableWidget(0,9); self.report_table.setHorizontalHeaderLabels(["Camera","Data/Hora","Placa","Velocidade","Faixa","Direcao","Tipo","Imagem","JSON"]); self.style_data_table(self.report_table); self.report_table.cellDoubleClicked.connect(self.open_report_item); layout.addWidget(self.report_table)
-
     def build_evolution_tab(self):
         layout = QVBoxLayout(self.tab_evolution)
         layout.setSpacing(8)
@@ -542,8 +522,9 @@ class MainWindow(QMainWindow):
         self.camera_list.clear()
         for name in names: self.camera_list.addItem(QListWidgetItem(name))
         if names: self.camera_list.setCurrentRow(0)
-        self.hist_camera.clear(); self.hist_camera.addItem(""); self.hist_camera.addItems(names)
-        self.report_camera.clear(); self.report_camera.addItem(""); self.report_camera.addItems(names)
+        # Update camera lists in history and report tabs
+        self.tab_history.set_camera_list(names)
+        self.tab_report.set_camera_list(names)
         if hasattr(self, "live_camera_combo"):
             selected = self.live_camera_combo.currentText().strip()
             self.live_camera_combo.blockSignals(True)
@@ -882,17 +863,6 @@ class MainWindow(QMainWindow):
             self.monitor_alert.setStyleSheet("padding: 10px; border: 1px solid #c9d2dc; background: #f4f7fa; color: #243447; border-radius: 6px;")
         self.monitor_alert.setText(text)
 
-    def filter_overspeed_rows(self, rows, selected_camera=""):
-        filtered = []
-        for row in rows:
-            camera_name = row[EVT_IDX_CAMERA_NAME]
-            if selected_camera and camera_name != selected_camera:
-                continue
-            _, is_overspeed = self.resolve_row_overspeed(row)
-            if is_overspeed:
-                filtered.append(row)
-        return filtered
-
     def on_event_received(self, data):
         self.lbl_cam.setText(data.get("camera_name") or "-"); self.lbl_plate.setText(data.get("plate") or "-"); self.lbl_speed.setText(data.get("speed") or "-"); self.lbl_lane.setText(data.get("lane") or "-"); self.lbl_direction.setText(data.get("direction") or "-"); self.lbl_type.setText(data.get("event_type") or "-"); self.lbl_image_status.setText(data.get("image_status") or "-")
         if data.get("image_path"):
@@ -955,18 +925,12 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, APP_NAME, "Este evento nao possui imagem salva.")
 
     def open_history_item(self, row, _column):
-        image_item = self.history_table.item(row, 7)
-        json_item = self.history_table.item(row, 8)
-        image_path = image_item.text().strip() if image_item else ""
-        json_path = json_item.text().strip() if json_item else ""
-        self.open_event_artifact(image_path, json_path)
+        """Open history item - delegates to history tab."""
+        self.tab_history.open_item(row, _column)
 
     def open_report_item(self, row, _column):
-        image_item = self.report_table.item(row, 7)
-        json_item = self.report_table.item(row, 8)
-        image_path = image_item.text().strip() if image_item else ""
-        json_path = json_item.text().strip() if json_item else ""
-        self.open_event_artifact(image_path, json_path)
+        """Open report item - delegates to report tab."""
+        self.tab_report.open_item(row, _column)
 
     def open_event_artifact(self, image_path: str, json_path: str):
         if image_path and Path(image_path).exists():
@@ -998,41 +962,24 @@ class MainWindow(QMainWindow):
         self.tab_dashboard.refresh()
 
     def refresh_history(self):
-        rows = self.db.filtered_events(camera_name=self.hist_camera.currentText().strip(), plate=self.hist_plate.text().strip(), date_text=self.hist_date.text().strip(), min_speed=self.hist_min_speed.text().strip(), over_limit=None)
-        self.history_table.setRowCount(len(rows))
-        for r, row in enumerate(rows):
-            for c, val in enumerate(row): self.history_table.setItem(r, c, QTableWidgetItem(str(val or "")))
+        """Refresh history table - delegates to history tab."""
+        self.tab_history.refresh()
 
     def apply_speed_limit_and_refresh_report(self):
-        self.config.data["speed_limit"] = int(self.speed_limit_spin.value()); self.config.save(); self.refresh_dashboard(); self.refresh_report()
+        """Apply speed limit and refresh report - delegates to report tab."""
+        self.tab_report.apply_and_refresh()
 
     def refresh_report(self):
-        selected_camera = self.report_camera.currentText().strip()
-        rows = self.db.recent_events_with_speed(camera_name=selected_camera, date_text=self.report_date.text().strip())
-        overspeed_rows = self.filter_overspeed_rows(rows, selected_camera=selected_camera)
-        self.report_table.setRowCount(len(overspeed_rows))
-        for r, row in enumerate(overspeed_rows):
-            display_row = (row[EVT_IDX_CAMERA_NAME], row[EVT_IDX_TS], row[EVT_IDX_PLATE], row[EVT_IDX_SPEED], row[EVT_IDX_LANE], row[EVT_IDX_DIRECTION], row[EVT_IDX_EVENT_TYPE], row[EVT_IDX_IMAGE_PATH], row[EVT_IDX_JSON_PATH])
-            for c, val in enumerate(display_row):
-                self.report_table.setItem(r, c, QTableWidgetItem(str(val or "")))
-        summary_limit = self.speed_limit_spin.value() if not selected_camera else self.get_camera_speed_settings(selected_camera)[0]
-        self.report_summary.setText(f"Limite base: {summary_limit} km/h | Eventos acima do limite efetivo: {len(overspeed_rows)}")
+        """Refresh report table - delegates to report tab."""
+        self.tab_report.refresh()
 
     def export_csv(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Salvar CSV", str(app_dir() / "historico_v42.csv"), "CSV (*.csv)")
-        if not path: return
-        rows = self.db.filtered_events(camera_name=self.hist_camera.currentText().strip(), plate=self.hist_plate.text().strip(), date_text=self.hist_date.text().strip(), min_speed=self.hist_min_speed.text().strip(), over_limit=None)
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f); writer.writerow(["Câmera","Data/Hora","Placa","Velocidade","Faixa","Direção","Tipo","Imagem","JSON"]); writer.writerows(rows)
-        QMessageBox.information(self, APP_NAME, f"CSV exportado:\n{path}")
+        """Export history to CSV - delegates to history tab."""
+        self.tab_history.export_csv()
 
     def export_overspeed_csv(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Salvar CSV", str(app_dir() / "excesso_velocidade_v42.csv"), "CSV (*.csv)")
-        if not path: return
-        rows = self.filter_overspeed_rows(self.db.recent_events_with_speed(camera_name=self.report_camera.currentText().strip(), date_text=self.report_date.text().strip()), selected_camera=self.report_camera.currentText().strip())
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f); writer.writerow(["Câmera","Data/Hora","Placa","Velocidade","Faixa","Direção","Tipo","Imagem","JSON"]); writer.writerows([(row[EVT_IDX_CAMERA_NAME], row[EVT_IDX_TS], row[EVT_IDX_PLATE], row[EVT_IDX_SPEED], row[EVT_IDX_LANE], row[EVT_IDX_DIRECTION], row[EVT_IDX_EVENT_TYPE], row[EVT_IDX_IMAGE_PATH], row[EVT_IDX_JSON_PATH]) for row in rows])
-        QMessageBox.information(self, APP_NAME, f"CSV de excesso exportado:\n{path}")
+        """Export overspeed report to CSV - delegates to report tab."""
+        self.tab_report.export_csv()
 
     def closeEvent(self, event):
         if self._allow_close or self.tray_icon is None:
