@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 if exist "%LocalAppData%\Programs\Python\Python313\python.exe" (
     set "PY_CMD=%LocalAppData%\Programs\Python\Python313\python.exe"
@@ -29,7 +29,7 @@ echo Usando: %PY_CMD%
 %PY_CMD% -m pip install --upgrade pip
 if errorlevel 1 goto pip_failed
 
-%PY_CMD% -m pip install -r requirements_hikvision_pro_v4.txt
+%PY_CMD% -m pip install -r configs/requirements_hikvision_pro_v4.txt
 if errorlevel 1 goto pip_failed
 
 if exist build rmdir /s /q build
@@ -38,7 +38,7 @@ if exist build goto clean_failed
 if exist dist rmdir /s /q dist
 if exist dist goto clean_failed
 
-%PY_CMD% -m PyInstaller --noconfirm --onefile --windowed --name HikvisionRadarProV42 hikvision_pro_v42_app.py
+%PY_CMD% -m PyInstaller --noconfirm HikvisionRadarProV42.spec
 if errorlevel 1 goto build_failed
 
 if not exist dist\HikvisionRadarProV42.exe goto build_failed

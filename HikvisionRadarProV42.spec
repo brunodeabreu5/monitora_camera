@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['hikvision_pro_v42_app.py'],
-    pathex=[],
+    ['main.py'],
+    pathex=['src'],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[('configs', 'configs')],
+    hiddenimports=['src.core.config', 'src.core.database', 'src.core.parsing', 'src.core.camera_client', 'src.core.evolution_client', 'ui', 'ui.widgets', 'ui.workers'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

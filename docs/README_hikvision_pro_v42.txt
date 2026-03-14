@@ -17,3 +17,8 @@ Recomendacao para sua iDS-TCM403-GIR:
 
 Gere o EXE com:
 build_hikvision_pro_v42_windows.bat
+
+CONFIGURACAO E CREDENCIAIS
+- O arquivo hikvision_pro_v42_config.json nao e versionado (esta no .gitignore).
+- Use hikvision_pro_v42_config.example.json como modelo: copie para hikvision_pro_v42_config.json e preencha.
+- Se o config com credenciais ja foi commitado no passado, troque a senha da camera e o token da Evolution API.

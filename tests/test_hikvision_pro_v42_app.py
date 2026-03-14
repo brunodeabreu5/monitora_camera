@@ -11,17 +11,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import requests
 from PySide6.QtWidgets import QApplication, QLineEdit
 
-from hikvision_pro_v42_app import (
-    AppConfig,
-    CameraClient,
-    Database,
-    EvolutionApiClient,
-    MainWindow,
-    PasswordField,
-    looks_like_complete_event_xml,
-    parse_event_xml,
-    render_event_message,
-)
+from src.core.config import AppConfig, render_event_message
+from src.core.camera_client import CameraClient
+from src.core.database import Database
+from src.core.evolution_client import EvolutionApiClient
+from src.core.parsing import looks_like_complete_event_xml, parse_event_xml
+from ui.widgets import PasswordField
+from src.app import MainWindow
 
 
 class FakeResponse:

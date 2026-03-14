@@ -1,0 +1,47 @@
+{
+  "speed_limit": 60,
+  "users": [
+    {
+      "username": "admin",
+      "password_hash": "",
+      "role": "Administrador",
+      "must_change_password": true
+    }
+  ],
+  "cameras": [
+    {
+      "name": "Camera 1",
+      "enabled": true,
+      "camera_ip": "192.168.1.64",
+      "camera_port": 80,
+      "camera_user": "admin",
+      "camera_pass": "",
+      "channel": 101,
+      "timeout": 15,
+      "output_dir": "",
+      "save_snapshot_on_event": true,
+      "camera_mode": "auto",
+      "speed_limit_enabled": true,
+      "speed_limit_value": 60,
+      "speed_alert_visual": true,
+      "rtsp_enabled": true,
+      "rtsp_port": 554,
+      "rtsp_transport": "tcp",
+      "rtsp_url": "",
+      "live_fallback_mode": "snapshot",
+      "evolution_enabled": false
+    }
+  ],
+  "evolution_api": {
+    "enabled": false,
+    "base_url": "",
+    "api_token": "",
+    "instance_name": "",
+    "instance_mode": "create_or_connect",
+    "recipient_numbers": [],
+    "send_image_with_caption": true,
+    "test_target_number": "",
+    "test_message_text": "Teste de conexao Evolution API",
+    "event_message_template": "Alerta de velocidade\nCamera: {camera}\nPlaca: {plate}\nVelocidade: {speed} km/h\nLimite: {limit} km/h\nData/Hora: {ts}\nFaixa: {lane}\nDirecao: {direction}\nTipo: {event_type}"
+  }
+}
