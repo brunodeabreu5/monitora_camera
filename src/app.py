@@ -44,6 +44,8 @@ from src.core.database import Database
 from src.core.evolution_client import EvolutionApiClient, EvolutionSendWorker
 from ui.widgets import LiveViewController, PasswordField
 from ui.workers import EventWorker, LiveSnapshotWorker
+from ui.tabs.dashboard_tab import DashboardTab
+from ui.tabs.users_tab import UsersTab
 
 
 def color_from_name(text: str) -> QColor:
@@ -156,7 +158,11 @@ class MainWindow(QMainWindow):
         main = QVBoxLayout(root); main.setContentsMargins(8, 8, 8, 8); main.setSpacing(8)
         tabs = QTabWidget(); tabs.setDocumentMode(True); main.addWidget(tabs)
 
-        self.tab_dashboard = QWidget(); self.tab_cameras = QWidget(); self.tab_monitor = QWidget(); self.tab_history = QWidget(); self.tab_report = QWidget(); self.tab_evolution = QWidget(); self.tab_users = QWidget()
+        # Create dashboard tab
+        self.tab_dashboard = DashboardTab(); self.tab_dashboard.set_main_window(self)
+        # Create users tab
+        self.tab_users = UsersTab(); self.tab_users.set_main_window(self); self.tab_users.set_logged_user(logged_user)
+        self.tab_cameras = QWidget(); self.tab_monitor = QWidget(); self.tab_history = QWidget(); self.tab_report = QWidget(); self.tab_evolution = QWidget()
         tabs.addTab(self.build_scroll_tab(self.tab_dashboard), "Dashboard")
         tabs.addTab(self.build_scroll_tab(self.tab_cameras), "Cameras")
         tabs.addTab(self.build_scroll_tab(self.tab_monitor), "Monitor")
@@ -165,7 +171,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.build_scroll_tab(self.tab_evolution), "Evolution API")
         tabs.addTab(self.build_scroll_tab(self.tab_users), "Usuarios")
 
-        self.build_dashboard_tab(); self.build_cameras_tab(); self.build_monitor_tab(); self.build_history_tab(); self.build_report_tab(); self.build_evolution_tab(); self.build_users_tab()
+        self.build_cameras_tab(); self.build_monitor_tab(); self.build_history_tab(); self.build_report_tab(); self.build_evolution_tab()
         file_menu = self.menuBar().addMenu("Arquivo")
         act_export = QAction("Exportar historico CSV", self); act_export.triggered.connect(self.export_csv); file_menu.addAction(act_export)
         act_export_over = QAction("Exportar excesso CSV", self); act_export_over.triggered.connect(self.export_overspeed_csv); file_menu.addAction(act_export_over)
@@ -211,17 +217,6 @@ class MainWindow(QMainWindow):
     def quit_application(self):
         self._allow_close = True
         self.close()
-
-    def build_dashboard_tab(self):
-        layout = QVBoxLayout(self.tab_dashboard); top = QHBoxLayout()
-        self.lbl_total = QLabel("0"); self.lbl_today = QLabel("0"); self.lbl_overspeed = QLabel("0"); self.lbl_last_plate = QLabel("-")
-        for title, widget in [("Total de eventos", self.lbl_total), ("Eventos hoje", self.lbl_today), ("Acima do limite", self.lbl_overspeed), ("Ultima placa", self.lbl_last_plate)]:
-            box = QGroupBox(title); vb = QVBoxLayout(box); widget.setStyleSheet("font-size: 28px; font-weight: 700; color: #102a43;"); vb.addWidget(widget); top.addWidget(box)
-        layout.addLayout(top)
-        log_box = QGroupBox("Atividade do sistema")
-        log_layout = QVBoxLayout(log_box)
-        self.dashboard_log = QTextEdit(); self.dashboard_log.setReadOnly(True); self.dashboard_log.setMinimumHeight(320); log_layout.addWidget(self.dashboard_log)
-        layout.addWidget(log_box)
 
     def build_cameras_tab(self):
         layout = QVBoxLayout(self.tab_cameras); splitter = QSplitter(Qt.Horizontal); splitter.setChildrenCollapsible(False)
@@ -538,26 +533,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(evo_tabs)
         self.load_evolution_settings_into_ui()
 
-    def build_users_tab(self):
-        layout = QVBoxLayout(self.tab_users)
-        if self.logged_user.get("role") != "Administrador":
-            msg = QLabel("Somente administradores podem gerenciar usuarios."); msg.setWordWrap(True); layout.addWidget(msg); layout.addStretch(1); return
-        splitter = QSplitter(Qt.Horizontal); self.user_list = QListWidget(); self.user_list.currentTextChanged.connect(self.load_selected_user)
-        self.user_list.setMinimumWidth(220)
-        box = QGroupBox("Cadastro de usuario"); form = QFormLayout(box); self.sys_user = QLineEdit(); self.sys_pass = PasswordField(); self.sys_role = QComboBox(); self.sys_role.addItems(["Administrador", "Operador"])
-        form.addRow("Usuario:", self.sys_user); form.addRow("Senha:", self.sys_pass); form.addRow("Perfil:", self.sys_role)
-        splitter.addWidget(self.user_list); splitter.addWidget(box); layout.addWidget(splitter)
-        btns_wrap = QWidget(); btns = QHBoxLayout(btns_wrap); btns.setContentsMargins(0,0,0,0)
-        for text, slot in [("Novo usuario", self.new_user), ("Salvar usuario", self.save_user), ("Excluir usuario", self.delete_user)]:
-            b = QPushButton(text); b.clicked.connect(slot); btns.addWidget(b)
-        btns.addStretch(1); layout.addWidget(btns_wrap); layout.addStretch(1); self.reload_user_list()
-
     def append_log(self, text):
-        stamp = now_str()
-        line = f"[{stamp}] {text}"
-        self.dashboard_log.append(line)
-        if hasattr(self, "monitor_log"):
-            self.monitor_log.append(line)
+        """Append a log message to the dashboard and monitor logs."""
+        self.tab_dashboard.append_log(text)
 
     def reload_camera_lists(self):
         names = self.config.get_camera_names()
@@ -1016,18 +994,8 @@ class MainWindow(QMainWindow):
             self.evo_qr_label.setPixmap(evo_qr.scaled(self.evo_qr_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def refresh_dashboard(self):
-        stats = self.db.dashboard_event_speeds()
-        overspeed = 0
-        for row in stats["rows"]:
-            applied_limit = row[2]
-            is_overspeed = row[3]
-            if applied_limit is not None and is_overspeed is not None:
-                overspeed += 1 if is_overspeed else 0
-                continue
-            limit, _ = self.get_camera_speed_settings(row[0])
-            if float(row[1] or 0) > float(limit):
-                overspeed += 1
-        self.lbl_total.setText(str(stats["total"])); self.lbl_today.setText(str(stats["today"])); self.lbl_overspeed.setText(str(overspeed)); self.lbl_last_plate.setText(stats["last_plate"] or "-")
+        """Refresh dashboard statistics."""
+        self.tab_dashboard.refresh()
 
     def refresh_history(self):
         rows = self.db.filtered_events(camera_name=self.hist_camera.currentText().strip(), plate=self.hist_plate.text().strip(), date_text=self.hist_date.text().strip(), min_speed=self.hist_min_speed.text().strip(), over_limit=None)
@@ -1065,51 +1033,6 @@ class MainWindow(QMainWindow):
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f); writer.writerow(["Câmera","Data/Hora","Placa","Velocidade","Faixa","Direção","Tipo","Imagem","JSON"]); writer.writerows([(row[EVT_IDX_CAMERA_NAME], row[EVT_IDX_TS], row[EVT_IDX_PLATE], row[EVT_IDX_SPEED], row[EVT_IDX_LANE], row[EVT_IDX_DIRECTION], row[EVT_IDX_EVENT_TYPE], row[EVT_IDX_IMAGE_PATH], row[EVT_IDX_JSON_PATH]) for row in rows])
         QMessageBox.information(self, APP_NAME, f"CSV de excesso exportado:\n{path}")
-
-    def reload_user_list(self):
-        if not hasattr(self, "user_list"): return
-        self.user_list.clear()
-        for user in self.config.data.get("users", []): self.user_list.addItem(user.get("username", ""))
-
-    def load_selected_user(self, username):
-        if not hasattr(self, "user_list"): return
-        for user in self.config.data.get("users", []):
-            if user.get("username") == username:
-                self.sys_user.setText(user.get("username", "")); self.sys_pass.clear(); self.sys_pass.setPlaceholderText("Digite uma nova senha para alterar"); idx = self.sys_role.findText(user.get("role", "Operador")); self.sys_role.setCurrentIndex(max(idx, 0)); return
-
-    def new_user(self):
-        self.sys_user.clear(); self.sys_pass.clear(); self.sys_pass.setPlaceholderText(""); self.sys_role.setCurrentIndex(1)
-
-    def save_user(self):
-        username = self.sys_user.text().strip()
-        password = self.sys_pass.text()
-        existing_user = self.config.get_user(username)
-        if not username:
-            QMessageBox.warning(self, APP_NAME, "Informe o usuario.")
-            return
-        if not password and not existing_user:
-            QMessageBox.warning(self, APP_NAME, "Informe a senha para novos usuarios.")
-            return
-        password_hash = existing_user.get("password_hash") if existing_user else ""
-        must_change_password = bool(existing_user.get("must_change_password")) if existing_user else False
-        if password:
-            password_hash = hash_password(password)
-            must_change_password = username == DEFAULT_ADMIN_USERNAME and password == DEFAULT_ADMIN_PASSWORD
-        self.config.upsert_user({
-            "username": username,
-            "password_hash": password_hash,
-            "role": self.sys_role.currentText(),
-            "must_change_password": must_change_password,
-        })
-        self.config.save()
-        self.reload_user_list()
-        QMessageBox.information(self, APP_NAME, "Usuario salvo.")
-
-    def delete_user(self):
-        username = self.sys_user.text().strip()
-        if not username: return
-        if username == self.logged_user.get("username"): QMessageBox.warning(self, APP_NAME, "Você não pode excluir o usuário logado."); return
-        self.config.delete_user(username); self.config.save(); self.reload_user_list(); self.new_user(); QMessageBox.information(self, APP_NAME, "Usuário excluído.")
 
     def closeEvent(self, event):
         if self._allow_close or self.tray_icon is None:
