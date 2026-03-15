@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import QMessageBox
 
 from src.core.camera_client import CameraClient
 from src.core.config import log_runtime_error, sanitize_filename
@@ -59,6 +60,12 @@ class EventWorker(QThread):
                     if isinstance(chunk, bytes):
                         chunk = chunk.decode("utf-8", errors="ignore")
                     buffer += chunk
+
+                    # Verifica se o erro é 500 e fornece dica de solução
+                    if "<?xml" not in buffer[:100] and "erro" in buffer[:100].lower():
+                        self.status.emit(f"{cfg['name']}: verificando alertStream...")
+                    else:
+                        break
 
                     # Limite para considerar XML incompleto e descartar: eventos ANPR podem ser muito longos e incluir imagem
                     MAX_INCOMPLETE_BEFORE_DISCARD = 50 * 1024 * 1024  # 50 MB
@@ -129,6 +136,25 @@ class EventWorker(QThread):
                         event_data["json_path"] = str(json_path)
                         self.status.emit(f"{cfg['name']}: evento processado – placa {event_data.get('plate') or '-'} velocidade {event_data.get('speed') or '-'}")
                         self.event_received.emit(event_data)
+            except RuntimeError as e:
+                # Erro específico de alertStream (ex: erro 500)
+                error_msg = str(e)
+                if "erro 500" in error_msg or "alertStream" in error_msg:
+                    # Tenta fornecer dica de solução
+                    try:
+                        hint = client.get_alert_stream_error_hint()
+                        self.status.emit(f"{cfg['name']}: erro no alertStream - " + hint[:200])
+                        QMessageBox.critical(
+                            None,
+                            "Erro ao conectar alertStream",
+                            f"Erro ao conectar ao alertStream da câmera:\n\n{error_msg}\n\nSugestão de solução:\n{hint}"
+                        )
+                    except Exception as exc:
+                        self.status.emit(f"{cfg['name']}: erro - {error_msg}")
+                else:
+                    self.status.emit(f"{cfg['name']}: erro - {error_msg}")
+                    log_runtime_error(f"EventWorker {cfg['name']}", e)
+                self.connection_state.emit(cfg["name"], False, error_msg)
             except Exception as e:
                 log_runtime_error(f"EventWorker {cfg['name']}", e)
                 self.connection_state.emit(cfg["name"], False, str(e))

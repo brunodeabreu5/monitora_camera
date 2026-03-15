@@ -255,10 +255,46 @@ class CameraClient:
                 if r.status_code == 500:
                     last_error = (
                         "Câmera retornou erro 500 (erro interno). "
-                        "Verifique o firmware da câmera e a configuração de eventos/alertStream."
+                        "Verifique o firmware da câmera e a configuração de eventos/alertStream. "
+                        "Se a câmera não suportar alertStream, use modo snapshot em 'Fallback live'."
                     )
                 else:
                     last_error = f"HTTP {r.status_code} em {url}"
             except Exception as e:
                 last_error = f"{url}: {e}"
         raise RuntimeError(last_error)
+
+    def get_alert_stream_error_hint(self) -> str:
+        """
+        Retorna uma dica útil para erro de alertStream.
+
+        Returns:
+            str: Mensagem de erro amigável com sugestões de solução.
+        """
+        # Verifica se a câmera suporta detecção de tráfego
+        try:
+            mode = self.detect_mode()
+            if mode == "traffic":
+                return (
+                    "A câmera detecta modo 'traffic', mas alertStream retornou erro 500. "
+                    "Possíveis causas:\n"
+                    "1. O alertStream não está configurado na câmera (ISAPI > Event > Notification)\n"
+                    "2. Firmware desatualizado\n"
+                    "3. A câmera não suporta alertStream (use modo snapshot)"
+                )
+            else:
+                return (
+                    "A câmera está em modo 'normal' e alertStream retornou erro 500. "
+                    "Possíveis causas:\n"
+                    "1. A câmera não suporta alertStream\n"
+                    "2. A câmera não suporta modo de tráfego (ISAPI > Traffic > TrafficDetection)\n"
+                    "3. Use modo snapshot para monitoramento visual"
+                )
+        except Exception:
+            return (
+                "Erro 500 ao acessar alertStream. Possíveis causas:\n"
+                "1. Câmera não suporta alertStream\n"
+                "2. Configuração de eventos/alertStream incorreta na câmera\n"
+                "3. Firmware desatualizado\n"
+                "Solução: Use modo snapshot em 'Fallback live' no aplicativo"
+            )
