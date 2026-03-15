@@ -1,56 +1,215 @@
 # Hikvision Radar Pro V4.2
 
-Windows desktop application for monitoring speed violations using Hikvision radar cameras (specifically tested with iDS-TCM403-GIR).
+<div align="center">
 
-## Features
+**Sistema completo de monitoramento de tráfego com detecção de violações de velocidade usando câmeras Hikvision iDS-TCM403-GIR**
 
-- **Real-time Event Monitoring**: Connects to Hikvision cameras via RTSP streams and XML event notifications
-- **Speed Violation Detection**: Configurable speed limits per camera with visual and alert notifications
-- **WhatsApp Integration**: Sends alerts via Evolution API when speed violations are detected
-- **Event Database**: SQLite database for persistent event storage with filtering and reporting
-- **Live Video View**: RTSP video streaming with snapshot fallback
-- **CSV Export**: Export event history and overspeed reports to CSV
-- **User Management**: Multi-user support with role-based access (Administrator/Operator)
+[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-## Screenshots
+[Features](#features) •
+[Installation](#installation) •
+[Configuration](#configuration) •
+[Usage](#usage) •
+[Development](#development) •
+[Security](#security)
 
-*(Add screenshots here when available)*
+</div>
 
-## Requirements
+---
 
-- **OS**: Windows 10 or later
-- **Python**: 3.13+ (or compatible version)
-- **Dependencies**: See `configs/requirements_hikvision_pro_v4.txt`
+## 🚀 Sobre o Projeto
 
-## Installation
+O **Hikvision Radar Pro V4.2** é uma aplicação desktop completa para monitoramento automático de tráfego e detecção de violações de velocidade, desenvolvida com Python e PySide6/Qt6. O sistema conecta-se a câmeras Hikvision com radar (iDS-TCM403-GIR) para capturar eventos em tempo real, identificar placas de veículos e detectar excessos de velocidade, com alertas automáticos via WhatsApp.
 
-### From Source
+### ✨ Principais Funcionalidades
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/brunodeabreu5/monitora_camera.git
-   cd monitora_camera
-   ```
+#### 🔍 Monitoramento em Tempo Real
+- Conexão simultânea com múltiplas câmeras Hikvision
+- Eventos em tempo real via HTTP alert stream
+- Detecção de placas (ANPR) e velocidade
+- Visualização ao vivo via RTSP ou snapshot HTTP
 
-2. Install dependencies:
-   ```bash
-   python -m pip install -r configs/requirements_hikvision_pro_v4.txt
-   ```
+#### ⚠️ Detecção de Excessos
+- Limites de velocidade configuráveis por câmera
+- Alertas visuais e sonoros instantâneos
+- Registro automático de infrações
+- Relatórios detalhados de excessos
 
-3. Create configuration:
-   ```bash
-   cp configs/hikvision_pro_v42_config.example.json hikvision_pro_v42_config.json
-   # Edit hikvision_pro_v42_config.json with your settings
-   ```
+#### 📱 Integração WhatsApp
+- Alertas automáticos via Evolution API
+- Envio de fotos das infrações
+- Mensagens customizáveis por template
+- Múltiplos destinatários
 
-4. Run the application:
-   ```bash
-   python main.py
-   ```
+#### 🗄️ Gerenciamento de Dados
+- Banco SQLite persistente
+- Filtros avançados (câmera, placa, data, velocidade)
+- Exportação CSV
+- Dashboard com estatísticas
 
-### From Executable
+#### 👥 Controle de Acesso
+- Múltiplos usuários com autenticação
+- Roles: Administrador e Operador
+- Senhas criptografadas (AES-256-GCM)
+- Auditoria de operações
 
-Download the latest release from [Releases](https://github.com/brunodeabreu5/monitora_camera/releases) and run `HikvisionRadarProV42.exe`.
+#### 🔐 Segurança (FASE 1 - Implementada)
+- ✅ Criptografia AES-256-GCM para senhas de câmeras
+- ✅ Senhas de usuários com SHA-256 + salt
+- ✅ Suporte a verificação SSL/TLS
+- ✅ Sem credenciais hardcoded
+- ✅ Wizard de primeira execução
+
+#### 🏗️ Arquitetura (FASE 3 - Implementada)
+- ✅ Repository Pattern para acesso a dados
+- ✅ Event-driven com pub/sub
+- ✅ Dependency Injection
+- ✅ Validação centralizada
+- ✅ Sistema de cache com TTL
+
+## 📋 Requisitos de Sistema
+
+### Mínimos
+- **SO**: Windows 10 ou superior / Linux (Ubuntu 20.04+)
+- **Python**: 3.10 ou superior
+- **RAM**: 4 GB mínimo (8 GB recomendado)
+- **Processador**: Dual-core 2.0 GHz
+- **Rede**: Ethernet 100 Mbps (recomendado Gigabit)
+- **Armazenamento**: 500 MB livres + espaço para imagens
+
+### Recomendados
+- **SO**: Windows 11 / Ubuntu 22.04 LTS
+- **RAM**: 16 GB
+- **Processador**: Quad-core 3.0 GHz
+- **GPU**: Para aceleração de decode de vídeo (opcional)
+
+## 📦 Instalação
+
+### Método 1: Via pip (Recomendado)
+
+```bash
+# Clonar repositório
+git clone https://github.com/brunodeabreu5/monitora_camera.git
+cd monitora_camera
+
+# Criar ambiente virtual
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+.venv\Scripts\activate     # Windows
+
+# Instalar dependências
+pip install -e ".[dev]"
+
+# Executar
+python main.py
+```
+
+### Método 2: Executável
+
+Baixe a versão mais recente em [Releases](https://github.com/brunodeabreu5/monitora_camera/releases) e execute `HikvisionRadarProV42.exe`.
+
+### Dependências
+
+As dependências principais são instaladas automaticamente:
+
+```
+PySide6>=6.6.0           # Interface Qt6
+requests>=2.31.0         # HTTP client
+cryptography>=41.0.0     # Criptografia
+Pillow>=10.0.0           # Processamento de imagem
+opencv-python>=4.8.0      # OpenCV (opcional)
+numpy>=1.24.0            # Processamento numérico
+```
+
+Para desenvolvimento:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Instala: pytest, black, flake8, mypy, pre-commit, etc.
+
+## ⚙️ Configuração
+
+### Primeira Execução
+
+Ao executar pela primeira vez, o **Wizard de Configuração Inicial** será exibido:
+
+1. **Criar Administrador**
+   - Nome de usuário (mínimo 3 caracteres)
+   - Senha forte (mínimo 8 caracteres, maiúscula, minúscula, números)
+   - Confirmação de senha
+
+2. **Configurar Câmeras** (opcional)
+   - Nome da câmera
+   - Endereço IP
+   - Porta HTTP (padrão: 80)
+   - Credenciais de acesso
+
+3. **Configurar Evolution API** (opcional)
+   - URL do servidor
+   - Token de API
+   - Nome da instância
+   - Números dos destinatários
+
+### Arquivo de Configuração
+
+O arquivo `hikvision_pro_v42_config.json` contém todas as configurações:
+
+```json
+{
+  "speed_limit": 60,
+  "cameras": [
+    {
+      "name": "Camera 1",
+      "enabled": true,
+      "camera_ip": "192.168.1.64",
+      "camera_port": 80,
+      "camera_user": "admin",
+      "camera_pass": {
+        "encrypted": "base64_encrypted_password",
+        "nonce": "base64_nonce"
+      },
+      "channel": 101,
+      "timeout": 15,
+      "speed_limit_value": 60,
+      "verify_ssl": false
+    }
+  ],
+  "evolution_api": {
+    "enabled": false,
+    "base_url": "http://localhost:8080",
+    "api_token": "your_token_here",
+    "instance_name": "instance_name",
+    "recipient_numbers": ["5511999999999"]
+  },
+  "users": [
+    {
+      "username": "admin",
+      "password_hash": "hash",
+      "password_salt": "salt",
+      "role": "Administrador"
+    }
+  ]
+}
+```
+
+> ⚠️ **Importante**: Senhas de câmeras são automaticamente criptografadas. Nunca edite manualmente o campo `camera_pass`.
+
+### Variáveis de Ambiente (Opcional)
+
+```bash
+# Desabilitar aceleração de hardware para decode de vídeo
+export QT_FFMPEG_DECODING_HW_DEVICE_TYPES=  # vazio = software
+
+# Reduzir logs do FFmpeg (Linux/Mac)
+export AV_LOG_LEVEL=quiet
+
+# Reduzir logs do FFmpeg (Windows)
+set AV_LOG_LEVEL=-8
+```
 
 ## Configuration
 
@@ -163,38 +322,195 @@ See [docs/SECURITY.md](docs/SECURITY.md) for security guidelines.
    - Apply speed limit and filter by camera/date
    - Export to CSV
 
-## Development
+## 💻 Desenvolvimento
 
-### Project Structure
+### Estrutura do Projeto
 
-The application follows a modular architecture:
-
-- **src/core/**: Business logic modules (config, database, camera client, etc.)
-- **ui/tabs/**: UI tab implementations (dashboard, users, history, report, cameras, evolution, monitor)
-- **ui/widgets.py**: Reusable UI components
-- **ui/workers.py**: Background worker threads
-
-### Building from Source
-
-```bash
-# Install build dependencies
-python -m pip install pyinstaller
-
-# Build executable
-python scripts/build_hikvision_pro_v42_windows.bat
+```
+monitora_camera/
+├── src/                        # Código fonte
+│   ├── core/                   # Módulos centrais
+│   │   ├── config.py          # Configuração (AppConfig, helpers)
+│   │   ├── database.py        # Banco SQLite (Database)
+│   │   ├── camera_client.py   # Cliente HTTP/RTSP
+│   │   ├── crypto.py          # Criptografia AES-256-GCM
+│   │   ├── event_manager.py   # Pub/sub events
+│   │   ├── exceptions.py      # Exceções customizadas
+│   │   ├── logging_config.py  # Logging estruturado
+│   │   ├── validators.py      # Validação de entrada
+│   │   ├── container.py       # Dependency Injection
+│   │   ├── cache.py           # Cache com TTL
+│   │   └── types.py           # Type aliases
+│   ├── repositories/           # Repository Pattern
+│   │   ├── event_repository.py
+│   │   ├── camera_repository.py
+│   │   └── user_repository.py
+│   ├── detection/              # Detecção
+│   │   └── car_detector.py    # Detecção de veículos
+│   └── app.py                  # Aplicação principal
+├── ui/                         # Interface
+│   ├── tabs/                   # Abas
+│   │   ├── dashboard_tab.py
+│   │   ├── cameras_tab.py
+│   │   ├── monitor_tab.py
+│   │   ├── history_tab.py
+│   │   ├── report_tab.py
+│   │   ├── users_tab.py
+│   │   └── evolution_tab.py
+│   ├── widgets.py              # Widgets customizados
+│   ├── workers.py              # Background threads
+│   ├── qt_imports.py           # Imports centralizados Qt
+│   ├── first_run_wizard.py     # Wizard primeira execução
+│   └── event_integration.py    # Integração de eventos
+├── tests/                      # Suíte de testes
+│   ├── unit/                   # Testes unitários
+│   ├── integration/            # Testes integração
+│   └── conftest.py             # Config pytest
+├── docs/                       # Documentação
+│   ├── architecture.md         # Arquitetura detalhada
+│   ├── DEVELOPMENT.md          # Guia de desenvolvimento
+│   └── TROUBLESHOOTING.md      # Solução de problemas
+├── scripts/                    # Scripts utilitários
+├── main.py                     # Entry point
+├── pyproject.toml              # Config do projeto
+└── README.md                   # Este arquivo
 ```
 
-The executable will be created in `dist/HikvisionRadarProV42.exe`.
-
-### Running Tests
-
-From the project root (with dependencies installed):
+### Configuração do Ambiente
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py" -v
+# Clonar
+git clone https://github.com/brunodeabreu5/monitora_camera.git
+cd monitora_camera
+
+# Ambiente virtual
+python -m venv .venv
+source .venv/bin/activate
+
+# Instalar dependências de desenvolvimento
+pip install -e ".[dev]"
+
+# Instalar pre-commit hooks
+pre-commit install
 ```
 
-The test file sets `QT_QPA_PLATFORM=offscreen` so the GUI tests run without a display. Optional: install pytest and run `python -m pytest tests/ -v`.
+### Executar Testes
+
+```bash
+# Todos os testes com coverage
+pytest --cov=src --cov-report=html
+
+# Apenas testes unitários
+pytest tests/unit/ -v
+
+# Testes específicos
+pytest tests/unit/test_validators.py -v
+
+# Excluir testes lentos
+pytest -m "not slow"
+```
+
+### Código Quality
+
+```bash
+# Formatar código
+black src/ tests/
+
+# Verificar lint
+flake8 src/ tests/
+
+# Organizar imports
+isort src/ tests/
+
+# Verificar tipos
+mypy src/
+
+# Executar pre-commit manualmente
+pre-commit run --all-files
+```
+
+### Build Executável
+
+```bash
+# Windows
+python -m PyInstaller --onefile --windowed --icon=app.ico main.py
+
+# Linux
+python -m PyInstaller --onefile --windowed main.py
+
+# Com Nuitka (melhor performance)
+python -m nuitka --standalone --onefile main.py
+```
+
+## 🔐 Segurança
+
+### Melhorias Implementadas (FASE 1)
+
+#### Criptografia de Senhas
+- ✅ **Senhas de câmeras**: AES-256-GCM
+  - Chave derivada de hardware ID
+  - Nonce único por criptografia
+  - Armazenamento seguro em JSON
+
+- ✅ **Senhas de usuários**: SHA-256 + Salt
+  - Salt único por usuário
+  - Iterações PBKDF2 (100.000)
+  - Validação de força obrigatória
+
+#### Verificação SSL/TLS
+- ✅ Suporte a `verify_ssl` por câmera
+- ✅ Suporte a fingerprints de cert autoassinado
+- ✅ Warnings claros quando SSL desabilitado
+
+#### Controle de Acesso
+- ✅ Sem credenciais hardcoded
+- ✅ Wizard de primeira execução
+- ✅ Validação de força de senha
+- ✅ Troca obrigatória na primeira execução
+
+### Boas Práticas
+
+1. **Nunca** commitar `hikvision_pro_v42_config.json` com senhas reais
+2. Usar `.gitignore` para evitar commits acidentais
+3. Rotacionar senhas periodicamente
+4. Usar HTTPS para Evolution API
+5. Manter sistema atualizado
+
+## 📚 Documentação
+
+- **[architecture.md](docs/architecture.md)**: Arquitetura detalhada do sistema
+- **[DEVELOPMENT.md](docs/DEVELOPMENT.md)**: Guia completo de desenvolvimento
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**: Solução de problemas comuns
+
+## 🛠️ Troubleshooting
+
+### Conexão com Câmeras
+
+**Erro: Connection Refused**
+- Verificar IP/porta
+- Ping na câmera: `ping 192.168.1.64`
+- Testar no navegador: `http://192.168.1.64`
+
+**Erro: Authentication Failed (401/403)**
+- Verificar usuário/senha
+- Tentar Digest Auth vs Basic Auth
+- Resetar senha na câmera
+
+### Vídeo RTSP
+
+**Erro: "RTP: missed packets"**
+- Usar `RTSP = tcp` na configuração
+- Verificar estabilidade da rede
+- Considerar `Fallback live = snapshot`
+
+### Evolution API
+
+**Erro: Invalid API Token**
+- Regenerar token no Evolution
+- Verificar URL base
+- Testar com curl: `curl http://localhost:8080`
+
+Veja [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) para mais detalhes.
 
 ## Troubleshooting
 
@@ -258,41 +574,61 @@ Opções: `--url`, `--user`, `--password` ou config em `hikvision_pro_v42_config
 - [AGENTS.md](docs/AGENTS.md) - AI agent instructions
 - [CLAUDE.md](docs/CLAUDE.md) - Claude Code project instructions
 
-## Version History
+## 🤝 Contribuindo
 
-See [CHANGELOG.md](CHANGELOG.md) for version history.
+Contribuições são bem-vindas! Por favor:
 
-## Contributing
+1. Fork o repositório
+2. Crie um branch para sua feature (`git checkout -b feature/NovaFuncionalidade`)
+3. Commit suas mudanças (`git commit -m 'feat: adicionar nova funcionalidade'`)
+4. Push para o branch (`git push origin feature/NovaFuncionalidade`)
+5. Abra um Pull Request
 
-Contributions are welcome! Please:
+### Convenções de Commit
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+Seguir [Conventional Commits](https://www.conventionalcommits.org/):
 
-## License
+```
+feat: nova funcionalidade
+fix: correção de bug
+docs: atualização de documentação
+style: formatação de código
+refactor: refatoração
+test: adicionar testes
+chore: atualização de dependências
+perf: melhoria de performance
+security: correção de segurança
+```
 
-[Specify your license here]
+## 📄 Licença
 
-## Support
+Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
 
-For issues and questions:
+## 🙏 Agradecimentos
 
-- Create an issue on GitHub
-- Review documentation in `docs/`
-- Check existing issues for similar problems
+- **Hikvision**: Pela câmera iDS-TCM403-GIR e documentação ISAPI
+- **Evolution API**: Pela integração WhatsApp
+- **PySide6/Qt**: Pelo excelente framework GUI
+- **Comunidade Python**: Por bibliotecas excepcionais
 
-## Acknowledgments
+## 📞 Suporte
 
-- **Hikvision**: For the iDS-TCM403-GIR radar camera
-- **Evolution API**: For WhatsApp integration
-- **PySide6**: For the Qt6 Python bindings
-- **Community**: For feedback and testing
+Para questões e problemas:
+
+- 📧 Abrir uma [issue no GitHub](https://github.com/brunodeabreu5/monitora_camera/issues)
+- 📖 Consultar documentação em [docs/](docs/)
+- 🔍 Verificar [issues existentes](https://github.com/brunodeabreu5/monitora_camera/issues?q=is%3Aissue)
 
 ---
 
-**Hikvision Radar Pro V4.2** - Speed violation monitoring for Hikvision radar cameras
+<div align="center">
 
-**Version:** 4.2.0
-**Last Updated:** 2026-03-14
+**Hikvision Radar Pro V4.2**
+
+*Sistema completo de monitoramento de tráfego com câmeras Hikvision*
+
+**Versão**: 4.2.0 | **Última atualização**: Março 2026
+
+[⬆ Voltar ao topo](#hikvision-radar-pro-v42)
+
+</div>

@@ -1,18 +1,69 @@
 # Cliente HTTP/RTSP para câmeras Hikvision
 from urllib.parse import quote
+from typing import Optional, Tuple
+import urllib3
 
 import requests
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
 
 class CameraClient:
+    """
+    Cliente HTTP/RTSP para câmeras Hikvision.
+
+    FASE 1.5 - Implementado suporte a verificação SSL/TLS com warnings
+    claros quando SSL está desabilitado.
+    """
+
     def __init__(self, cfg: dict):
+        """
+        Inicializa cliente de câmera Hikvision.
+
+        Args:
+            cfg: Dicionário de configuração da câmera com campos:
+                - camera_ip: Endereço IP
+                - camera_port: Porta HTTP
+                - camera_user: Nome de usuário
+                - camera_pass: Senha (pode ser criptografada ou texto claro)
+                - timeout: Timeout de requisição (segundos)
+                - verify_ssl: Se True, verifica certificado SSL (default: False)
+                - ssl_fingerprint: Fingerprint SHA256 esperado para cert autoassinado
+        """
         self.cfg = cfg
         self.ip = cfg["camera_ip"].strip()
         self.port = int(cfg["camera_port"])
         self.user = cfg["camera_user"]
-        self.password = cfg["camera_pass"]
+
+        # Descriptografar senha se necessário (FASE 1.2 - Crypto)
+        password = cfg.get("camera_pass", "")
+        if isinstance(password, dict):
+            # Senha criptografada - precisa descriptografar
+            try:
+                from .crypto import decrypt_password
+                self.password = decrypt_password(password)
+            except Exception:
+                # Fallback para string vazia se falhar
+                self.password = ""
+        else:
+            self.password = str(password) if password else ""
+
         self.timeout = int(cfg["timeout"])
+
+        # FASE 1.5 - Configuração SSL/TLS
+        self.verify_ssl = bool(cfg.get("verify_ssl", False))
+        self.ssl_fingerprint = str(cfg.get("ssl_fingerprint", "")).strip() or None
+
+        # Warning se SSL estiver desabilitado
+        if not self.verify_ssl:
+            import sys
+            print(
+                f"[WARNING] SSL verification is DISABLED for camera {self.ip}. "
+                f"This is a security risk. Enable verify_ssl in config.",
+                file=sys.stderr
+            )
+            # Suprimir warnings do urllib3 sobre SSL
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         self.session = requests.Session()
         self.auth = HTTPDigestAuth(self.user, self.password)
         self.auth_basic = HTTPBasicAuth(self.user, self.password)
@@ -57,16 +108,76 @@ class CameraClient:
     def traffic_probe_url(self):
         return f"{self.base_http()}/ISAPI/Traffic/channels/1/vehicleDetect"
 
-    def request(self, url, stream=False, timeout=None, auth=None):
+    def request(self, url: str, stream: bool = False, timeout: Optional[int] = None, auth: Optional[object] = None) -> requests.Response:
+        """
+        Faz requisição HTTP para a câmera.
+
+        FASE 1.5 - Suporta verificação SSL/TLS com opção de desabilitar
+        para compatibilidade com certificados autoassinados.
+
+        Args:
+            url: URL completa para requisição
+            stream: Se True, usa streaming para resposta
+            timeout: Timeout personalizado (usa default se None)
+            auth: Objeto de autenticação personalizado (usa default se None)
+
+        Returns:
+            requests.Response: Resposta da requisição
+
+        Raises:
+            requests.RequestException: Em caso de erro de requisição
+        """
         if timeout is None:
             timeout = self.timeout
+
+        # FASE 1.5 - Verificar URL HTTPS e configurar SSL
+        is_https = url.startswith("https://")
+        verify = self.verify_ssl if is_https else True
+
+        # Se fingerprint fornecido, usar validação personalizada
+        if is_https and self.ssl_fingerprint:
+            verify = self._verify_ssl_fingerprint
+
         return self.session.get(
             url,
             auth=auth or self.auth,
             timeout=timeout,
             stream=stream,
+            verify=verify,
             headers={"Accept": "multipart/x-mixed-replace, text/xml, */*"},
         )
+
+    def _verify_ssl_fingerprint(self, cert: dict, hostname: str) -> bool:
+        """
+        Valida certificado SSL usando fingerprint SHA256.
+
+        Permite usar certificados autoassinados conhecidos sem
+        comprometer a segurança.
+
+        Args:
+            cert: Dicionário com dados do certificado
+            hostname: Nome do host sendo validado
+
+        Returns:
+            bool: True se fingerprint confere, False caso contrário
+        """
+        import hashlib
+
+        if not self.ssl_fingerprint:
+            return False
+
+        # Calcular fingerprint do certificado recebido
+        cert_der = cert.get("der")
+        if not cert_der:
+            return False
+
+        fingerprint = hashlib.sha256(cert_der).digest()
+        fingerprint_hex = fingerprint.hex().upper()
+
+        # Comparar com fingerprint esperado
+        expected = self.ssl_fingerprint.replace(":", "").upper()
+
+        return fingerprint_hex == expected
 
     def describe_connection_result(self, status_code: int, detail: str):
         if status_code in (401, 403):

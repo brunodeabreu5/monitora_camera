@@ -7,11 +7,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QListWidget, QLineEdit, QPushButton, QLabel, QSpinBox,
-    QCheckBox, QComboBox, QMessageBox, QSplitter, QWidget, QListWidgetItem, QFileDialog
+    QCheckBox, QComboBox, QMessageBox, QSplitter, QWidget, QListWidgetItem, QFileDialog, QInputDialog
 )
 
 from src.core.camera_client import CameraClient
 from src.core.config import APP_NAME, app_dir
+from src.core.crypto import is_encrypted_password
 from ui.widgets import PasswordField
 from .base_tab import BaseTab
 
@@ -43,6 +44,9 @@ class CamerasTab(BaseTab):
         self.cam_enabled = None
         self.cam_snapshot = None
         self.cam_mode = None
+        # FASE 1.2 - Store encrypted password when loading
+        self._current_encrypted_pass = None
+        self._selected_camera_name = None  # Track which camera is selected
 
         self.build_ui()
 
@@ -186,6 +190,7 @@ class CamerasTab(BaseTab):
         for text, slot in [
             ("Nova camera", self.new_camera),
             ("Salvar camera", self.save_camera),
+            ("Renomear Camera", self.rename_camera),
             ("Excluir camera", self.delete_camera),
             ("Testar conexao", self.test_camera_connection),
             ("Snapshot manual", self.manual_snapshot)
@@ -240,11 +245,26 @@ class CamerasTab(BaseTab):
         if not cam:
             return
 
+        # FASE 1.2 - Track selected camera
+        self._selected_camera_name = cam.get("name", "")
+
         self.cam_name.setText(cam.get("name", ""))
         self.cam_ip.setText(cam.get("camera_ip", ""))
         self.cam_port.setValue(int(cam.get("camera_port", 80)))
         self.cam_user.setText(cam.get("camera_user", ""))
-        self.cam_pass.setText(cam.get("camera_pass", ""))
+
+        # FASE 1.2 - Handle encrypted passwords
+        camera_pass = cam.get("camera_pass", "")
+        if is_encrypted_password(camera_pass):
+            # Password is encrypted - show placeholder
+            self.cam_pass.setText("••••••••")  # Placeholder for encrypted password
+            # Store encrypted password to preserve it when saving
+            self._current_encrypted_pass = camera_pass
+        else:
+            # Plain text password (or empty)
+            self.cam_pass.setText(camera_pass)
+            self._current_encrypted_pass = None
+
         self.cam_channel.setValue(int(cam.get("channel", 101)))
         self.cam_timeout.setValue(int(cam.get("timeout", 15)))
         self.cam_mode.setCurrentText(cam.get("camera_mode", "auto"))
@@ -267,13 +287,22 @@ class CamerasTab(BaseTab):
         config = self.get_config()
         default_output = str(app_dir() / "output") if not config else config.data.get("output_dir", str(app_dir() / "output"))
 
+        # FASE 1.2 - Handle password properly (encrypted or plain text)
+        password_text = self.cam_pass.text()
+        # If password shows placeholder and we have encrypted password, keep encrypted
+        if password_text == "••••••••" and self._current_encrypted_pass:
+            camera_pass = self._current_encrypted_pass
+        else:
+            # Plain text password (new or edited)
+            camera_pass = password_text
+
         return {
             "name": self.cam_name.text().strip() or "Camera",
             "enabled": self.cam_enabled.isChecked(),
             "camera_ip": self.cam_ip.text().strip(),
             "camera_port": int(self.cam_port.value()),
             "camera_user": self.cam_user.text().strip(),
-            "camera_pass": self.cam_pass.text(),
+            "camera_pass": camera_pass,
             "channel": int(self.cam_channel.value()),
             "timeout": int(self.cam_timeout.value()),
             "rtsp_enabled": self.cam_rtsp_enabled.isChecked(),
@@ -317,9 +346,123 @@ class CamerasTab(BaseTab):
         self.cam_evolution_enabled.setChecked(False)
         self.cam_output.setText(str(app_dir() / "output"))
         self.cam_enabled.setChecked(True)
+        # FASE 1.2 - Reset encrypted password tracking for new camera
+        self._current_encrypted_pass = None
+        self._selected_camera_name = None
         self.cam_snapshot.setChecked(True)
         self.cam_snapshot_url.clear()
         self.cam_mode.setCurrentText("auto")
+
+    def rename_camera(self):
+        """
+        Inicia workflow de renomeação de câmera com migração de dados históricos.
+
+        Fluxo:
+        1. Valida que uma câmera está selecionada
+        2. Solicita novo nome via diálogo
+        3. Valida que novo nome não existe
+        4. Conta registros históricos afetados
+        5. Mostra diálogo de confirmação
+        6. Executa migração atômica
+        7. Atualiza UI e emite signal
+        """
+        current_name = self.cam_name.text().strip()
+        if not current_name:
+            QMessageBox.warning(self, APP_NAME, "Selecione uma câmera primeiro.")
+            return
+
+        # 1. Pedir novo nome
+        new_name, ok = QInputDialog.getText(
+            self, "Renomear Câmera",
+            "Novo nome para a câmera:",
+            text=current_name
+        )
+        if not ok or not new_name or new_name == current_name:
+            return
+
+        new_name = new_name.strip()
+
+        # 2. Validar nome único
+        config = self.get_config()
+        if not config:
+            return
+
+        if config.get_camera(new_name):
+            QMessageBox.warning(
+                self, APP_NAME,
+                f"Já existe uma câmera com o nome '{new_name}'."
+            )
+            return
+
+        # 3. Contar registros afetados
+        from src.repositories.camera_repository import CameraRepository
+        from src.core.database import Database, app_dir
+
+        try:
+            db = Database(app_dir() / "events.db")
+            repo = CameraRepository(config)
+            counts = repo.count_camera_events(current_name, db)
+        except Exception as e:
+            QMessageBox.warning(
+                self, APP_NAME,
+                f"Erro ao verificar registros históricos: {str(e)}"
+            )
+            return
+
+        # 4. Diálogo de confirmação
+        if counts["total"] > 0:
+            message = (
+                f"Ao renomear '{current_name}' para '{new_name}', "
+                f"{counts['total']} registros históricos serão atualizados:\n\n"
+                f"• Eventos: {counts.get('events', 0)}\n"
+                f"• Snapshots: {counts.get('snapshots', 0)}\n\n"
+                f"Deseja continuar?"
+            )
+        else:
+            message = (
+                f"A câmera '{current_name}' não possui registros históricos.\n"
+                f"Deseja renomeá-la para '{new_name}'?"
+            )
+
+        reply = QMessageBox.question(
+            self, "Confirmar Renomeação",
+            message,
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # 5. Executar migração
+        try:
+            result = repo.rename_camera_events(
+                current_name, new_name,
+                user=getattr(self.main_window, 'current_user', 'unknown') if self.main_window else 'unknown',
+                db=db
+            )
+
+            # 6. Recarregar UI
+            self.reload_camera_list()
+            self.camera_list.setCurrentText(new_name)
+
+            # 7. Emitir signal para notificar outras partes da aplicação
+            if self.main_window and hasattr(self.main_window, 'event_manager'):
+                self.main_window.event_manager.camera_renamed.emit(current_name, new_name)
+
+            # 8. Sucesso
+            QMessageBox.information(
+                self, APP_NAME,
+                f"Câmera renomeada com sucesso!\n\n"
+                f"De: '{current_name}'\n"
+                f"Para: '{new_name}'\n\n"
+                f"{result['updated']['total']} registros atualizados."
+            )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self, APP_NAME,
+                f"Erro ao renomear câmera:\n{str(e)}"
+            )
 
     def _validate_camera_form(self, cam: dict) -> tuple[bool, str | None]:
         """Retorna (True, None) se valido; (False, mensagem) se invalido."""

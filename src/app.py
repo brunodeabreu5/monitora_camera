@@ -63,16 +63,74 @@ def color_from_name(text: str) -> QColor:
 
 
 class MainWindow(QMainWindow):
+    """
+    Janela principal do Hikvision Radar Pro V4.2.
+
+    Gerencia todas as abas da aplicação, workers de monitoramento,
+    e coordena comunicação entre componentes.
+
+    FASE 2.5 - Refatorado para extrair lógica de inicialização
+    em métodos específicos, melhorando legibilidade e manutenibilidade.
+    """
+
     def __init__(self, config: AppConfig, logged_user: dict):
+        """
+        Inicializa janela principal da aplicação.
+
+        Args:
+            config: Configuração da aplicação
+            logged_user: Dicionário com dados do usuário autenticado
+        """
         super().__init__()
+
+        # Armazenar configurações
         self.config = config
         self.logged_user = logged_user
-        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} - {logged_user.get('username')} ({logged_user.get('role')})")
+
+        # Configurar janela
+        self._setup_window_properties()
+
+        # Inicializar banco de dados
+        self._setup_database()
+
+        # Inicializar estado da aplicação
+        self._setup_state()
+
+        # Construir UI
+        self._setup_ui()
+
+        # Configurar workers
+        self._setup_workers()
+
+        # Configurar eventos e sinais
+        self._setup_events()
+
+        # Configurar menu
+        self._setup_menu()
+
+        # Configurar system tray
+        self.setup_tray_icon()
+
+        # Carregar dados iniciais
+        self._load_initial_data()
+
+        # Verificar se usuário precisa trocar senha
+        self._check_password_change_required()
+
+    def _setup_window_properties(self):
+        """Configura propriedades básicas da janela."""
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} - {self.logged_user.get('username')} ({self.logged_user.get('role')})")
         self.resize(1360, 900)
         self.setMinimumSize(QSize(1100, 740))
+
+    def _setup_database(self):
+        """Inicializa conexão com banco de dados."""
         default_output = Path(app_dir() / "output")
         default_output.mkdir(parents=True, exist_ok=True)
         self.db = Database(default_output / DB_FILE)
+
+    def _setup_state(self):
+        """Inicializa variáveis de estado da aplicação."""
         self.workers = {}
         self.evolution_workers = []
         self.camera_states = {}
@@ -80,14 +138,42 @@ class MainWindow(QMainWindow):
         self.live_view_running = False
         self._allow_close = False
         self._tray_message_shown = False
+
+    def _setup_ui(self):
+        """Constrói interface de usuário com todas as abas."""
         self.build_ui()
+
+    def _setup_workers(self):
+        """Inicializa workers de monitoramento e processamento."""
+        # Workers são inicializados sob demanda quando monitoramento inicia
+        pass
+
+    def _setup_events(self):
+        """Configura conexões de sinais e eventos entre componentes."""
         # Set references to monitor tab UI elements for event processing
         self._setup_monitor_tab_references()
-        self.setup_tray_icon()
+
+    def _setup_menu(self):
+        """Configura barra de menu da aplicação."""
+        # Menu é criado dentro de build_ui(), este método é para
+        # extensibilidade futura para configurações adicionais de menu
+        pass
+
+    def _load_initial_data(self):
+        """Carrega dados iniciais nas abas após inicialização."""
         self.reload_camera_lists()
-        self.refresh_dashboard(); self.refresh_history(); self.refresh_report()
+        self.refresh_dashboard()
+        self.refresh_history()
+        self.refresh_report()
+
+    def _check_password_change_required(self):
+        """Verifica se usuário precisa trocar senha e exibe alerta."""
         if self.config.user_requires_password_change(self.logged_user.get("username", "")):
-            QMessageBox.warning(self, APP_NAME, "Este usuario ainda usa a senha padrao. Abra a aba Usuarios e defina uma nova senha.")
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "Este usuario ainda usa a senha padrao. Abra a aba Usuarios e defina uma nova senha."
+            )
 
     def build_scroll_tab(self, inner_widget):
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QScrollArea.NoFrame); scroll.setWidget(inner_widget); return scroll

@@ -91,7 +91,14 @@ class HikvisionAppTests(unittest.TestCase):
             saved = reloaded.get_camera("Portaria")
             self.assertIsNotNone(saved)
             self.assertEqual(saved["name"], camera["name"])
-            self.assertEqual(saved["camera_pass"], camera["camera_pass"])
+            # FASE 1.2: Passwords are now encrypted - check if it's encrypted format
+            self.assertIsInstance(saved["camera_pass"], dict)
+            self.assertIn("encrypted", saved["camera_pass"])
+            self.assertIn("nonce", saved["camera_pass"])
+            # Verify we can decrypt it back
+            from src.core.crypto import decrypt_password
+            decrypted_pass = decrypt_password(saved["camera_pass"])
+            self.assertEqual(decrypted_pass, camera["camera_pass"])
             self.assertEqual(saved["camera_ip"], camera["camera_ip"])
             self.assertEqual(saved["camera_user"], camera["camera_user"])
             self.assertEqual(saved["speed_limit_value"], camera["speed_limit_value"])
@@ -694,7 +701,13 @@ class HikvisionAppTests(unittest.TestCase):
             cameras_to_monitor = [c for c in reloaded.data.get("cameras", []) if c.get("enabled", True)]
             self.assertEqual(len(cameras_to_monitor), 1)
             self.assertEqual(cameras_to_monitor[0]["name"], "Cam A")
-            self.assertEqual(cameras_to_monitor[0]["camera_pass"], "salva")
+            # FASE 1.2: Passwords are now encrypted - verify format
+            self.assertIsInstance(cameras_to_monitor[0]["camera_pass"], dict)
+            self.assertIn("encrypted", cameras_to_monitor[0]["camera_pass"])
+            # Verify we can decrypt it back
+            from src.core.crypto import decrypt_password
+            decrypted_pass = decrypt_password(cameras_to_monitor[0]["camera_pass"])
+            self.assertEqual(decrypted_pass, "salva")
             self.assertEqual(cameras_to_monitor[0]["camera_user"], "admin")
 
     @contextmanager

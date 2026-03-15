@@ -6,13 +6,31 @@ import hashlib
 import secrets
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Dict, Any, List
+
+# Import crypto module for password encryption (FASE 1 - Security)
+try:
+    from .crypto import (
+        encrypt_password,
+        decrypt_password,
+        is_encrypted_password,
+        migrate_plaintext_to_encrypted,
+        check_crypto_available,
+        CryptoError
+    )
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
+    CryptoError = Exception
 
 APP_NAME = "Hikvision Radar Pro V4.2"
 APP_VERSION = "4.2.0"
 CONFIG_FILE = "hikvision_pro_v42_config.json"
 DB_FILE = "events_v42.db"
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin"
+# FASE 1.3 - Credenciais padrão removidas por segurança
+# O usuário deve criar credenciais através do wizard de primeira execução
+DEFAULT_ADMIN_USERNAME = None  # Must be set by user
+DEFAULT_ADMIN_PASSWORD = None  # Must be set by user
 
 # Índices da tupla retornada por Database.recent_events_with_speed()
 EVT_IDX_CAMERA_NAME = 0
@@ -182,24 +200,76 @@ def verify_password(user: dict, password: str) -> bool:
 
 
 class AppConfig:
-    def __init__(self, filepath: Path | None = None):
+    def __init__(self, filepath: Path | None = None, skip_first_run_check: bool = False):
+        """
+        Inicializa configuração da aplicação.
+
+        Args:
+            filepath: Caminho para arquivo de configuração (opcional)
+            skip_first_run_check: Se True, não verifica se é primeira execução
+                (usado para testes e inicialização antes do wizard)
+
+        Raises:
+            RuntimeError: Se arquivo de config existe mas está corrompido
+        """
         self.filepath = filepath or (app_dir() / CONFIG_FILE)
+        self._is_first_run = not self.filepath.exists()
+
+        # Initialize with empty structure - will be populated by load() or wizard
         self.data = {
             "speed_limit": 60,
-            "users": [self._default_admin_user()],
-            "cameras": [self._default_camera()],
-            "evolution_api": self._default_evolution_api(),
+            "users": [],
+            "cameras": [],
+            "evolution_api": {},
+            "_version": APP_VERSION,
         }
-        self.load()
 
-    def _default_admin_user(self) -> dict:
-        pwd_hash, pwd_salt = hash_password(DEFAULT_ADMIN_PASSWORD)
+        # Only try to load if config file exists
+        if self.filepath.exists():
+            self.load()
+        elif not skip_first_run_check:
+            # First run - no users yet, wizard will populate
+            self.data["users"] = []
+            self.data["cameras"] = []
+            self.data["evolution_api"] = self._default_evolution_api()
+
+    def is_first_run(self) -> bool:
+        """
+        Verifica se é a primeira execução da aplicação.
+
+        Returns:
+            bool: True se não há usuários configurados (primeira execução)
+        """
+        return len(self.data.get("users", [])) == 0
+
+    def _default_admin_user(self, username: Optional[str] = None, password: Optional[str] = None) -> dict:
+        """
+        Cria usuário admin padrão com credenciais fornecidas.
+
+        FASE 1.3 - Não usa mais credenciais hardcoded.
+        As credenciais devem ser fornecidas pelo usuário através do
+        wizard de primeira execução.
+
+        Args:
+            username: Nome de usuário do admin (obrigatório)
+            password: Senha do admin (obrigatório)
+
+        Returns:
+            dict: Dicionário com dados do usuário admin
+
+        Raises:
+            ValueError: Se username ou password não forem fornecidos
+        """
+        if not username or not password:
+            raise ValueError("Admin credentials must be provided for first-time setup")
+
+        pwd_hash, pwd_salt = hash_password(password)
         return {
-            "username": DEFAULT_ADMIN_USERNAME,
+            "username": username,
             "password_hash": pwd_hash,
             "password_salt": pwd_salt,
             "role": "Administrador",
-            "must_change_password": True,
+            "must_change_password": False,  # User just set it, no need to change
         }
 
     def _default_camera(self) -> dict:
@@ -227,6 +297,9 @@ class AppConfig:
             "evolution_enabled": False,
             "live_detection_enabled": False,
             "detection_confidence_threshold": 0.5,
+            # FASE 1.5 - SSL/TLS settings
+            "verify_ssl": False,
+            "ssl_fingerprint": "",
         }
 
     def _default_evolution_api(self) -> dict:
@@ -268,8 +341,10 @@ class AppConfig:
             user["must_change_password"] = bool(user.get("must_change_password", False))
             if user.get("username"):
                 normalized.append(user)
-        if not normalized:
-            normalized.append(self._default_admin_user())
+
+        # FASE 1.3 - Não criar usuário admin padrão automaticamente
+        # O wizard de primeira execução deve criar o usuário admin
+        # Se não há usuários normalizados, mantém vazio (indica primeira execução)
         self.data["users"] = normalized
 
     def _normalize_cameras(self):
@@ -284,7 +359,32 @@ class AppConfig:
             camera["enabled"] = bool(camera.get("enabled", True))
             camera["camera_ip"] = str(camera.get("camera_ip", "")).strip()
             camera["camera_user"] = str(camera.get("camera_user", "")).strip()
-            camera["camera_pass"] = str(camera.get("camera_pass", ""))
+
+            # FASE 1.2 - Criptografia de senhas de câmeras
+            # Processar senha: migrar para criptografada se necessário
+            camera_pass_raw = camera.get("camera_pass", "")
+            if isinstance(camera_pass_raw, str) and camera_pass_raw and CRYPTO_AVAILABLE:
+                # Senha em texto claro - migrar para formato criptografado
+                try:
+                    if not is_encrypted_password(camera_pass_raw):
+                        camera["camera_pass"] = migrate_plaintext_to_encrypted(camera_pass_raw)
+                        log_runtime_error(
+                            f"AppConfig: Senha da câmera '{camera['name']}' migrada para formato criptografado",
+                            Exception("Migration info only")
+                        )
+                    else:
+                        camera["camera_pass"] = camera_pass_raw
+                except Exception as exc:
+                    log_runtime_error(
+                        f"AppConfig: Falha ao criptografar senha da câmera '{camera['name']}'",
+                        exc
+                    )
+                    # Manter texto claro como fallback
+                    camera["camera_pass"] = camera_pass_raw
+            else:
+                # Já é dict criptografado ou senha vazia ou crypto não disponível
+                camera["camera_pass"] = camera_pass_raw if camera_pass_raw else ""
+
             camera["output_dir"] = str(camera.get("output_dir", defaults["output_dir"]))
             camera["save_snapshot_on_event"] = bool(camera.get("save_snapshot_on_event", True))
             camera["snapshot_url"] = str(camera.get("snapshot_url", "")).strip()
@@ -327,6 +427,9 @@ class AppConfig:
             except Exception as exc:
                 log_runtime_error("AppConfig normalizacao rtsp_port", exc)
                 camera["rtsp_port"] = defaults["rtsp_port"]
+            # FASE 1.5 - SSL/TLS settings normalization
+            camera["verify_ssl"] = bool(camera.get("verify_ssl", False))
+            camera["ssl_fingerprint"] = str(camera.get("ssl_fingerprint", "")).strip()
             normalized.append(camera)
         if not normalized:
             normalized.append(defaults)
@@ -381,11 +484,97 @@ class AppConfig:
     def get_camera_names(self):
         return [c.get("name", "Camera") for c in self.data.get("cameras", [])]
 
-    def get_camera(self, name):
+    def get_camera(self, name: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Recupera configuração de uma câmera pelo nome.
+
+        Args:
+            name: Nome único da câmera
+
+        Returns:
+            Dicionário com configuração da câmera ou None se não encontrada
+
+        Raises:
+            ValueError: Se name for None ou string vazia
+        """
+        if not name:
+            return None
+
         for cam in self.data.get("cameras", []):
             if cam.get("name") == name:
-                return cam
+                # Return a copy to avoid modifying original
+                return dict(cam)
         return None
+
+    def get_camera_decrypted(self, name: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Recupera configuração de câmera com senha descriptografada.
+
+        Retorna uma cópia da configuração da câmera com o campo
+        'camera_pass' contendo a senha em texto claro para uso
+        em tempo de execução.
+
+        Args:
+            name: Nome único da câmera
+
+        Returns:
+            Dicionário com configuração da câmera e senha descriptografada,
+            ou None se não encontrada
+
+        Raises:
+            CryptoError: Se falhar a descriptografia da senha
+        """
+        camera = self.get_camera(name)
+        if not camera:
+            return None
+
+        # Descriptografar senha se necessário
+        camera_pass = camera.get("camera_pass", "")
+        if isinstance(camera_pass, dict) and CRYPTO_AVAILABLE:
+            try:
+                camera["camera_pass"] = decrypt_password(camera_pass)
+            except Exception as exc:
+                log_runtime_error(
+                    f"AppConfig: Falha ao descriptografar senha da câmera '{name}'",
+                    exc
+                )
+                # Retornar None para indicar erro
+                return None
+        elif isinstance(camera_pass, str):
+            # Senha já está em texto claro
+            camera["camera_pass"] = camera_pass
+        else:
+            # Tipo inválido ou vazio
+            camera["camera_pass"] = ""
+
+        return camera
+
+    def load_camera_password(self, camera: Dict[str, Any]) -> str:
+        """
+        Helper para extrair senha descriptografada de um dict de câmera.
+
+        Args:
+            camera: Dicionário de configuração de câmera
+
+        Returns:
+            Senha em texto claro (string vazia se não houver senha)
+        """
+        if not camera:
+            return ""
+
+        camera_pass = camera.get("camera_pass", "")
+        if isinstance(camera_pass, dict) and CRYPTO_AVAILABLE:
+            try:
+                return decrypt_password(camera_pass)
+            except Exception as exc:
+                log_runtime_error(
+                    f"AppConfig: Falha ao descriptografar senha da câmera",
+                    exc
+                )
+                return ""
+        elif isinstance(camera_pass, str):
+            return camera_pass
+        return ""
 
     def upsert_camera(self, camera_data):
         cameras = self.data.setdefault("cameras", [])
